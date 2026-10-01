@@ -494,49 +494,109 @@ button, input, textarea {
   border-top-right-radius: 4px;
 }
 
-.bubble-text-content p {
-  margin: 0 0 6px 0;
+.bubble-text-content {
+  color: var(--text-body);
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 
-.bubble-text-content p:last-child {
+.bubble-paragraph {
+  margin: 0 0 8px 0;
+  line-height: 1.6;
+}
+
+.bubble-paragraph:last-child {
   margin-bottom: 0;
+}
+
+.bubble-spacer {
+  height: 8px;
+}
+
+.bubble-section-header {
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--text-main);
+  margin: 12px 0 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: -0.01em;
+}
+
+.bubble-section-header:first-child {
+  margin-top: 0;
+}
+
+.bubble-strong {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.bubble-inline-code {
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  color: #0F172A;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .bubble-bullet-line {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 3px 0;
+  margin: 4px 0;
+  padding-left: 2px;
 }
 
 .bullet-dot {
   color: var(--primary-blue);
-  font-weight: 800;
-  font-size: 14px;
-  line-height: 1.4;
+  font-weight: 900;
+  font-size: 13px;
+  line-height: 1.5;
+  flex-shrink: 0;
 }
 
 .bullet-content {
   flex: 1;
+  line-height: 1.55;
+  color: var(--text-body);
 }
 
 .bubble-num-line {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  margin: 4px 0;
+  gap: 10px;
+  margin: 6px 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #F8FAFC;
+  border: 1px solid #F1F5F9;
 }
 
 .num-badge {
-  font-weight: 800;
+  background: var(--primary-blue-light);
+  border: 1px solid #BFDBFE;
   color: var(--primary-blue);
-  font-size: 12px;
-  min-width: 18px;
-  line-height: 1.5;
+  font-weight: 800;
+  font-size: 11px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .num-content {
   flex: 1;
+  line-height: 1.55;
+  color: var(--text-body);
 }
 
 .message-timestamp {

@@ -41,42 +41,82 @@ const POPULAR_TOPICS = [
   { icon: "❓", title: "General Help", prompt: "The office printer is jamming and print spooler is offline." }
 ];
 
+function parseInlineMarkdown(text) {
+  if (!text) return null;
+  // Match **bold** and `code`
+  const tokens = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+  return tokens.map((token, idx) => {
+    if (token.startsWith("**") && token.endsWith("**")) {
+      return <strong key={idx} className="bubble-strong">{token.slice(2, -2)}</strong>;
+    }
+    if (token.startsWith("`") && token.endsWith("`")) {
+      return <code key={idx} className="bubble-inline-code">{token.slice(1, -1)}</code>;
+    }
+    return token;
+  });
+}
+
 function renderFormattedText(text) {
   if (!text) return null;
   const lines = text.split("\n");
-  return lines.map((line, idx) => {
-    if (!line.trim()) {
-      return <div key={idx} style={{ height: "6px" }} />;
-    }
-    // Parse bold tags **text**
-    const parts = line.split(/(\*\*.*?\*\*)/g);
-    const renderedParts = parts.map((part, pIdx) => {
-      if (part.startsWith("**") && part.endsWith("**")) {
-        return <strong key={pIdx}>{part.slice(2, -2)}</strong>;
-      }
-      return part;
-    });
 
-    if (line.startsWith("• ") || line.startsWith("- ")) {
+  return lines.map((line, idx) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return <div key={idx} className="bubble-spacer" />;
+    }
+
+    // Skip orphan bullet markers with no content
+    if (trimmed === "•" || trimmed === "-" || trimmed === "*") {
+      return null;
+    }
+
+    // Section headers (emoji or special markers)
+    if (
+      trimmed.startsWith("🛠️") ||
+      trimmed.startsWith("👉") ||
+      trimmed.startsWith("⚠️") ||
+      trimmed.startsWith("🚨") ||
+      trimmed.startsWith("🔬") ||
+      trimmed.startsWith("⚙️")
+    ) {
       return (
-        <div key={idx} className="bubble-bullet-line">
-          <span className="bullet-dot">•</span>
-          <span className="bullet-content">{renderedParts}</span>
+        <div key={idx} className="bubble-section-header">
+          {parseInlineMarkdown(trimmed)}
         </div>
       );
     }
-    if (/^\d+\.\s/.test(line)) {
-      const numMatch = line.match(/^(\d+)\.\s(.*)$/);
-      if (numMatch) {
-        return (
-          <div key={idx} className="bubble-num-line">
-            <span className="num-badge">{numMatch[1]}.</span>
-            <span className="num-content">{numMatch[2]}</span>
-          </div>
-        );
-      }
+
+    // Bullet lines (strip leading bullet marker so it never renders twice)
+    if (/^[•\-\*]\s+/.test(trimmed)) {
+      const cleanContent = trimmed.replace(/^[•\-\*]\s+/, "");
+      return (
+        <div key={idx} className="bubble-bullet-line">
+          <span className="bullet-dot">•</span>
+          <span className="bullet-content">{parseInlineMarkdown(cleanContent)}</span>
+        </div>
+      );
     }
-    return <p key={idx}>{renderedParts}</p>;
+
+    // Numbered step lines (e.g. "1. **Title**: Description")
+    const numMatch = trimmed.match(/^(\d+)\.\s*(.*)$/);
+    if (numMatch) {
+      const stepNum = numMatch[1];
+      const stepContent = numMatch[2];
+      return (
+        <div key={idx} className="bubble-num-line">
+          <span className="num-badge">{stepNum}</span>
+          <span className="num-content">{parseInlineMarkdown(stepContent)}</span>
+        </div>
+      );
+    }
+
+    // Standard paragraph
+    return (
+      <p key={idx} className="bubble-paragraph">
+        {parseInlineMarkdown(trimmed)}
+      </p>
+    );
   });
 }
 
