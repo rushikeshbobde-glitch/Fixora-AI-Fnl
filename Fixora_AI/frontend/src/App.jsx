@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { getTickets, getTicket, investigate, performAction, getKnowledgeBase, getSystemStatus } from "./api";
+import { useEffect, useState, useRef } from "react";
+import { getTickets, getTicket, investigate, performAction, getKnowledgeBase, getSystemStatus, sendVoiceChatMessage } from "./api";
 
 const PRESETS = [
   { label: "🔒 VPN Connection Stalled", issue: "My VPN is not connecting and corporate gateway keeps timing out.", category: "vpn" },
@@ -12,13 +12,13 @@ const PRESETS = [
 const EMPLOYEES = [
   { name: "Jane Doe", email: "jane.doe@fixora.local", dept: "Engineering", avatar: "👩‍💻" },
   { name: "Alex Rivera", email: "alex.rivera@fixora.local", dept: "Marketing & Growth", avatar: "👨‍🎨" },
-  { name: "Sarah Connor", email: "sarah.connor@fixora.local", dept: "Security & Operations", avatar: "👩‍🚀" }
+  { name: "Sarah Connor", email: "sarah.connor@fixora.local", dept: "Security & Ops", avatar: "👩‍🚀" }
 ];
 
 const AGENT_META = {
   "Ticket Triage Agent": { icon: "🧭", desc: "Extracts intent, category, and business impact priority." },
-  "Knowledge / RAG Agent": { icon: "📚", desc: "Retrieves grounded IT runbooks & past ticket precedents from DB." },
-  "System Diagnosis Agent": { icon: "🔬", desc: "Probes live system status and correlates symptoms with root cause." },
+  "Knowledge / RAG Agent": { icon: "📚", desc: "Retrieves grounded IT runbooks & past ticket precedents." },
+  "System Diagnosis Agent": { icon: "🔬", desc: "Probes live system status and establishes root cause." },
   "Troubleshooting Agent": { icon: "📋", desc: "Dynamically selects non-destructive tools based on issue signals." },
   "Resolution Agent": { icon: "⚙️", desc: "Safely executes approved simulated IT remediation tools." },
   "Verification Agent": { icon: "🧪", desc: "Validates tool outputs against service recovery criteria." },
@@ -27,27 +27,47 @@ const AGENT_META = {
 };
 
 export default function App() {
-  const [deskMode, setDeskMode] = useState("consumer"); // 'consumer' | 'specialist' | 'kb'
   const [selectedEmployee, setSelectedEmployee] = useState(EMPLOYEES[0]);
-  const [issue, setIssue] = useState(PRESETS[0].issue);
+  const [activeView, setActiveView] = useState("chat"); // 'chat' | 'telemetry' | 'kb'
   
-  const [result, setResult] = useState(null);
+  // Chat & Voice state
+  const [messages, setMessages] = useState([
+    {
+      id: "welcome-1",
+      sender: "ai",
+      text: "Hello! I am Fixora AI, your autonomous IT helpdesk assistant. You can type your tech problem below or tap 'Start AI Audio Call' to speak with me directly. How can I assist your setup today?",
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+  ]);
+  const [inputText, setInputText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [activeTicket, setActiveTicket] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [kbArticles, setKbArticles] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
-  const [actionNote, setActionNote] = useState("");
+
+  // Live Audio Call State
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [callTranscript, setCallTranscript] = useState("");
+  const [callDuration, setCallDuration] = useState(0);
+  const [operatorNote, setOperatorNote] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState(null);
-  const [filter, setFilter] = useState("ALL");
-  const [feedbackSent, setFeedbackSent] = useState(false);
-  const [showTelemetryModal, setShowTelemetryModal] = useState(false);
 
-  // Live investigation step state for animated intake
-  const [investigationStep, setInvestigationStep] = useState(0);
+  const chatEndRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const callTimerRef = useRef(null);
 
-  async function loadInitialData() {
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  // Load Initial Data
+  async function loadData() {
     try {
       const [ticketList, kb, health] = await Promise.all([
         getTickets().catch(() => []),
@@ -57,64 +77,188 @@ export default function App() {
       setTickets(ticketList);
       setKbArticles(kb);
       setSystemHealth(health);
-      if (ticketList.length > 0 && !result) {
+      if (ticketList.length > 0 && !activeTicket) {
         const latest = await getTicket(ticketList[0].id).catch(() => null);
-        if (latest) setResult(latest);
+        if (latest) setActiveTicket(latest);
       }
     } catch {
-      // Backend starting up
+      // Backend starting
     }
   }
 
   useEffect(() => {
-    loadInitialData();
+    loadData();
   }, []);
 
-  async function handleInvestigate() {
-    if (!issue.trim()) return;
+  // Text-to-Speech function
+  function speakText(text) {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.05;
+    utterance.pitch = 1.0;
+    
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  // Handle Send Text Message
+  async function handleSendMessage(msgToSend) {
+    const text = (msgToSend || inputText).trim();
+    if (!text) return;
+
+    const userMsg = {
+      id: `user-${Date.now()}`,
+      sender: "user",
+      text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setInputText("");
     setLoading(true);
     setError("");
-    setFeedbackSent(false);
-    setInvestigationStep(1);
-
-    const stepTimer1 = setTimeout(() => setInvestigationStep(2), 350);
-    const stepTimer2 = setTimeout(() => setInvestigationStep(4), 700);
 
     try {
-      const data = await investigate(issue, selectedEmployee.name, selectedEmployee.email);
-      setResult(data);
-      setInvestigationStep(6);
-      const updatedList = await getTickets();
-      setTickets(updatedList);
+      const res = await sendVoiceChatMessage(text, selectedEmployee.name, selectedEmployee.email, false, activeTicket?.ticket_id);
+      
+      const aiMsg = {
+        id: `ai-${Date.now()}`,
+        sender: "ai",
+        text: res.reply,
+        ticket: res.ticket,
+        actionType: res.action_type,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+
+      setMessages((prev) => [...prev, aiMsg]);
+      if (res.ticket) {
+        setActiveTicket(res.ticket);
+        const updatedTickets = await getTickets().catch(() => []);
+        setTickets(updatedTickets);
+      }
     } catch (err) {
       setError(err.message);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          sender: "ai",
+          text: `⚠️ I encountered a connection issue: ${err.message}. Please check if the local server is running.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
     } finally {
-      clearTimeout(stepTimer1);
-      clearTimeout(stepTimer2);
       setLoading(false);
     }
   }
 
-  async function handleSelectTicket(id) {
-    setError("");
-    setFeedbackSent(false);
-    try {
-      const data = await getTicket(id);
-      setResult(data);
-    } catch (err) {
-      setError(err.message);
+  // Handle Live Audio Call Start/Stop
+  function startAudioCall() {
+    setIsCallActive(true);
+    setCallDuration(0);
+    setCallTranscript("Connecting to Fixora Voice Agent...");
+
+    // Timer
+    callTimerRef.current = setInterval(() => {
+      setCallDuration((d) => d + 1);
+    }, 1000);
+
+    // Initial greeting
+    const welcomeSpeech = `Hello ${selectedEmployee.name.split(" ")[0]}! I'm on the line. What IT problem are you facing right now?`;
+    speakText(welcomeSpeech);
+    setCallTranscript(welcomeSpeech);
+
+    // Setup Speech Recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onresult = async (event) => {
+        const lastResult = event.results[event.results.length - 1];
+        if (lastResult.isFinal) {
+          const spoken = lastResult[0].transcript.trim();
+          if (spoken.length > 2) {
+            setCallTranscript(`You: "${spoken}"`);
+            await processVoiceCallInput(spoken);
+          }
+        }
+      };
+
+      recognition.onerror = (e) => {
+        console.warn("Speech recognition notice:", e.error);
+      };
+
+      try {
+        recognition.start();
+        recognitionRef.current = recognition;
+      } catch (err) {
+        console.warn("Speech recognition start failed:", err);
+      }
+    } else {
+      setCallTranscript("Voice synthesis active. Type or use preset chips to simulate speech.");
     }
   }
 
-  async function handleOperatorAction(actionType) {
-    if (!result?.ticket_id) return;
-    setActionLoading(true);
-    setError("");
+  async function processVoiceCallInput(spokenText) {
+    setIsSpeaking(true);
+    setCallTranscript(`Analyzing your issue: "${spokenText}"...`);
+
     try {
-      const updated = await performAction(result.ticket_id, actionType, actionNote);
-      setResult(updated);
-      setActionNote("");
-      const updatedList = await getTickets();
+      const res = await sendVoiceChatMessage(spokenText, selectedEmployee.name, selectedEmployee.email, true, activeTicket?.ticket_id);
+      
+      const replySpeech = res.spoken_audio_text || res.reply;
+      setCallTranscript(replySpeech);
+      speakText(replySpeech);
+
+      if (res.ticket) {
+        setActiveTicket(res.ticket);
+        const updatedList = await getTickets().catch(() => []);
+        setTickets(updatedList);
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        { id: `u-${Date.now()}`, sender: "user", text: spokenText, isVoice: true, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+        { id: `a-${Date.now()}`, sender: "ai", text: res.reply, ticket: res.ticket, isVoice: true, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+      ]);
+    } catch (err) {
+      const errMsg = "I had trouble processing that request. Please try again or switch to text chat.";
+      setCallTranscript(errMsg);
+      speakText(errMsg);
+    }
+  }
+
+  function endAudioCall() {
+    setIsCallActive(false);
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  }
+
+  function formatCallTime(secs) {
+    const mins = Math.floor(secs / 60);
+    const remaining = secs % 60;
+    return `${mins.toString().padStart(2, '0')}:${remaining.toString().padStart(2, '0')}`;
+  }
+
+  async function handleOperatorAction(actionType) {
+    if (!activeTicket?.ticket_id) return;
+    setActionLoading(true);
+    try {
+      const updated = await performAction(activeTicket.ticket_id, actionType, operatorNote);
+      setActiveTicket(updated);
+      setOperatorNote("");
+      const updatedList = await getTickets().catch(() => []);
       setTickets(updatedList);
     } catch (err) {
       setError(err.message);
@@ -123,693 +267,470 @@ export default function App() {
     }
   }
 
-  const resolvedCount = tickets.filter(t => t.status === "RESOLUTION_READY" || t.status === "RESOLVED_BY_HUMAN").length;
-  const escalatedCount = tickets.filter(t => t.status === "ESCALATE_TO_HUMAN" || t.status === "DISPATCHED_TO_TIER2").length;
-  const totalCount = tickets.length;
-  const resolutionRate = totalCount ? Math.round((resolvedCount / totalCount) * 100) : 0;
-
-  const isResolved = result?.status === "RESOLUTION_READY" || result?.status === "RESOLVED_BY_HUMAN";
-  const isEscalated = result?.status === "ESCALATE_TO_HUMAN" || result?.status === "DISPATCHED_TO_TIER2";
-
   return (
-    <div className="app">
-      {/* 1. Global Navigation Topbar */}
-      <header className="topbar">
-        <div className="brand">
-          <div className="logo-badge">
-            <span className="logo-spark">⚡</span>
-          </div>
-          <div className="brand-text">
-            <div className="brand-title">
-              FIXORA <span className="highlight">AI</span>
-            </div>
-            <div className="brand-subtitle">Autonomous IT Frontdesk & Service Portal</div>
+    <div className="app-container">
+      {/* Topbar */}
+      <header className="desk-topbar">
+        <div className="topbar-brand">
+          <div className="brand-orb">⚡</div>
+          <div className="brand-names">
+            <span className="brand-main">FIXORA <span className="neon">AI</span></span>
+            <span className="brand-sub">Autonomous IT Service Desk & Voice Assistant</span>
           </div>
         </div>
 
-        <nav className="mode-nav">
+        <div className="topbar-nav">
           <button
-            className={`nav-item ${deskMode === "consumer" ? "active" : ""}`}
-            onClick={() => setDeskMode("consumer")}
+            className={`nav-tab-btn ${activeView === "chat" ? "active" : ""}`}
+            onClick={() => setActiveView("chat")}
           >
-            🧑‍💼 Employee Frontdesk
+            💬 Support Hub
           </button>
           <button
-            className={`nav-item ${deskMode === "specialist" ? "active" : ""}`}
-            onClick={() => setDeskMode("specialist")}
+            className={`nav-tab-btn ${activeView === "telemetry" ? "active" : ""}`}
+            onClick={() => setActiveView("telemetry")}
           >
-            👨‍💻 IT Specialist Console
+            🔬 Multi-Agent Telemetry ({activeTicket ? `#${activeTicket.ticket_id}` : "Idle"})
           </button>
           <button
-            className={`nav-item ${deskMode === "kb" ? "active" : ""}`}
-            onClick={() => setDeskMode("kb")}
+            className={`nav-tab-btn ${activeView === "kb" ? "active" : ""}`}
+            onClick={() => setActiveView("kb")}
           >
-            📚 Knowledge Runbooks ({kbArticles.length})
+            📚 Runbooks ({kbArticles.length})
           </button>
-        </nav>
+        </div>
 
-        <div className="topbar-actions">
-          <div className="status-indicator-pill">
-            <span className="pulse-dot"></span>
-            <span className="indicator-text">Corporate Core: Online</span>
-          </div>
+        <div className="topbar-user-pill">
+          <span className="emp-avatar">{selectedEmployee.avatar}</span>
+          <select
+            className="emp-select"
+            value={selectedEmployee.email}
+            onChange={(e) => {
+              const emp = EMPLOYEES.find(x => x.email === e.target.value);
+              if (emp) setSelectedEmployee(emp);
+            }}
+          >
+            {EMPLOYEES.map(e => (
+              <option key={e.email} value={e.email}>{e.name} ({e.dept})</option>
+            ))}
+          </select>
         </div>
       </header>
 
-      {/* 2. System Status Live Ticker Banner */}
-      <div className="system-ticker-bar">
-        <div className="ticker-label">
-          <span className="ticker-icon">📡</span> LIVE IT SERVICES:
-        </div>
-        <div className="ticker-items">
-          <span className="ticker-badge success">● VPN Gateway: 18ms</span>
-          <span className="ticker-badge success">● Active Directory SSO: Operational</span>
-          <span className="ticker-badge success">● DHCP/DNS (1.1.1.1): Nominal</span>
-          <span className="ticker-badge warning">● Office Spooler: Auto-Healed</span>
-          <span className="ticker-badge info">● Problem Statement #12: Active</span>
-        </div>
-      </div>
+      {/* Main Support Interface */}
+      <main className="desk-main">
+        {activeView === "chat" && (
+          <div className="chat-layout">
+            {/* Left Sidebar: Quick Presets & Self Service */}
+            <aside className="chat-sidebar">
+              {/* Audio Call Action Card */}
+              <div className="voice-call-cta-card">
+                <div className="cta-icon-glow">🎙️</div>
+                <div className="cta-title">Live Voice Call with AI</div>
+                <p className="cta-desc">Speak naturally to Fixora AI. It diagnoses your issue, runs automated recovery, and speaks back.</p>
+                <button
+                  className={`btn-voice-call ${isCallActive ? "active-call" : ""}`}
+                  onClick={isCallActive ? endAudioCall : startAudioCall}
+                >
+                  {isCallActive ? "🔴 End Call (" + formatCallTime(callDuration) + ")" : "📞 Start AI Audio Call"}
+                </button>
+              </div>
 
-      {/* 3. Main Workspace Area */}
-      <main className="main-content">
-        {deskMode === "consumer" && (
-          <div className="consumer-desk-layout">
-            {/* Left Column: Employee Intake & Frontdesk Concierge */}
-            <div className="consumer-left-pane">
-              {/* Employee Persona Card */}
-              <div className="portal-card employee-badge-card">
-                <div className="employee-info-header">
-                  <div className="employee-avatar">{selectedEmployee.avatar}</div>
-                  <div className="employee-details">
-                    <div className="greeting-title">Hello, {selectedEmployee.name}! 👋</div>
-                    <div className="employee-sub">
-                      {selectedEmployee.dept} · {selectedEmployee.email}
-                    </div>
-                  </div>
-                  <div className="employee-switcher">
-                    <label>Switch Employee:</label>
-                    <select
-                      value={selectedEmployee.email}
-                      onChange={(e) => {
-                        const emp = EMPLOYEES.find(x => x.email === e.target.value);
-                        if (emp) setSelectedEmployee(emp);
-                      }}
+              {/* Quick Problem Presets */}
+              <div className="sidebar-section">
+                <div className="section-label">⚡ 1-Click Problem Simulations</div>
+                <div className="chips-column">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      className="sidebar-chip"
+                      onClick={() => handleSendMessage(p.issue)}
                     >
-                      {EMPLOYEES.map(emp => (
-                        <option key={emp.email} value={emp.email}>{emp.name} ({emp.dept})</option>
-                      ))}
-                    </select>
-                  </div>
+                      <span>{p.label}</span>
+                      <span className="chip-arrow">→</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Problem Submission / Intake Box */}
-              <div className="portal-card intake-card">
-                <div className="card-header">
-                  <div className="card-title-group">
-                    <span className="card-icon">💬</span>
-                    <div>
-                      <h2>How can Fixora IT Helpdesk assist you today?</h2>
-                      <p className="card-sub">
-                        Our Agentic AI will investigate knowledge runbooks, system status & previous tickets to resolve your issue automatically.
-                      </p>
+              {/* System Health Status */}
+              <div className="sidebar-section health-section">
+                <div className="section-label">📡 System Diagnostics Status</div>
+                <div className="health-badge-list">
+                  <div className="health-row"><span className="dot online"></span> VPN Gateway (18ms)</div>
+                  <div className="health-row"><span className="dot online"></span> Azure AD / LDAP Sync</div>
+                  <div className="health-row"><span className="dot online"></span> DHCP/DNS (1.1.1.1)</div>
+                  <div className="health-row"><span className="dot degraded"></span> Print Spooler (Healed)</div>
+                </div>
+              </div>
+            </aside>
+
+            {/* Center / Right: Interactive Chat & Resolution Stream */}
+            <section className="chat-viewport">
+              <div className="chat-header-bar">
+                <div className="agent-online-status">
+                  <span className="pulse-circle"></span>
+                  <div>
+                    <div className="agent-name">Fixora Autonomous Resolution Desk</div>
+                    <div className="agent-sub">Powered by 7 Multi-Agent Reasoning Pipelines</div>
+                  </div>
+                </div>
+
+                {activeTicket && (
+                  <div className="ticket-active-badge">
+                    <span className="t-badge-id">Ticket #{activeTicket.ticket_id}</span>
+                    <span className={`t-badge-status ${activeTicket.status === "RESOLUTION_READY" ? "resolved" : "escalated"}`}>
+                      {activeTicket.status.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Messages Scroll Area */}
+              <div className="chat-messages-area">
+                {messages.map((m) => (
+                  <div key={m.id} className={`chat-bubble-row ${m.sender}`}>
+                    <div className="bubble-avatar">
+                      {m.sender === "ai" ? "⚡" : selectedEmployee.avatar}
+                    </div>
+                    <div className="bubble-content-wrapper">
+                      <div className="bubble-meta">
+                        <span className="sender-name">{m.sender === "ai" ? "Fixora AI Desk" : selectedEmployee.name}</span>
+                        <span className="msg-time">{m.timestamp}</span>
+                        {m.isVoice && <span className="voice-tag">🎙️ Voice Call</span>}
+                      </div>
+
+                      <div className="bubble-text">
+                        {m.text.split('\n').map((paragraph, i) => (
+                          <p key={i}>{paragraph}</p>
+                        ))}
+                      </div>
+
+                      {/* If message resulted in ticket resolution / execution */}
+                      {m.ticket && (
+                        <div className="embedded-ticket-card">
+                          <div className="etc-header">
+                            <span className="etc-title">⚙️ Autonomous Multi-Agent Action Summary</span>
+                            <span className="etc-confidence">{Math.round((m.ticket.confidence || 0.9) * 100)}% Verified</span>
+                          </div>
+
+                          <div className="etc-body">
+                            <div className="etc-item">
+                              <span className="etc-label">Diagnosis:</span>
+                              <span className="etc-val">{m.ticket.diagnosis}</span>
+                            </div>
+                            <div className="etc-item">
+                              <span className="etc-label">Resolution Applied:</span>
+                              <span className="etc-val">{m.ticket.resolution}</span>
+                            </div>
+                            {m.ticket.dynamic_tools && (
+                              <div className="etc-tools-row">
+                                <span className="etc-label">Dynamic Tool:</span>
+                                {m.ticket.dynamic_tools.map((dt, idx) => (
+                                  <span key={idx} className={`tool-pill ${dt.decision === "SELECTED" ? "selected" : "skipped"}`}>
+                                    {dt.tool} ({dt.decision})
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="etc-footer">
+                            <button
+                              className="btn-inspect-telemetry"
+                              onClick={() => setActiveView("telemetry")}
+                            >
+                              🔍 View 7-Agent Execution Trace →
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
+                ))}
 
-                <div className="quick-incident-section">
-                  <div className="quick-label">⚡ One-Click Problem Simulations:</div>
-                  <div className="preset-chips-grid">
-                    {PRESETS.map((preset) => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        className={`chip-btn ${issue === preset.issue ? "chip-active" : ""}`}
-                        onClick={() => setIssue(preset.issue)}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
+                {loading && (
+                  <div className="chat-bubble-row ai">
+                    <div className="bubble-avatar">⚡</div>
+                    <div className="bubble-content-wrapper">
+                      <div className="thinking-bubble">
+                        <span className="pulse-dot-ai"></span>
+                        <span>Investigating knowledge runbooks, probing system status & selecting dynamic tools...</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
 
-                <div className="intake-form">
-                  <label className="input-label" htmlFor="issue-input">
-                    Describe your IT issue, error prompt, or device trouble:
-                  </label>
+              {/* Chat Input Bar */}
+              <div className="chat-input-container">
+                <div className="input-box-wrapper">
                   <textarea
-                    id="issue-input"
-                    className="issue-textarea"
-                    rows="3"
-                    placeholder="e.g. My VPN is failing with handshake timeout, or office printer is showing spooler error..."
-                    value={issue}
-                    onChange={(e) => setIssue(e.target.value)}
+                    className="chat-textarea"
+                    rows="2"
+                    placeholder="Type your tech trouble, error message, or hardware issue... (or click voice call on left)"
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
                   />
 
-                  {error && <div className="error-banner">⚠️ {error}</div>}
+                  <div className="input-actions-bar">
+                    <button
+                      type="button"
+                      className="btn-mic-quick"
+                      title="Simulate Voice Input"
+                      onClick={() => handleSendMessage(PRESETS[0].issue)}
+                    >
+                      🎙️
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-send"
+                      disabled={loading || !inputText.trim()}
+                      onClick={() => handleSendMessage()}
+                    >
+                      {loading ? "Solving..." : "⚡ Send to AI"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
 
+        {/* View 2: Multi-Agent Telemetry & Operator Supervision */}
+        {activeView === "telemetry" && (
+          <div className="telemetry-layout">
+            <div className="telemetry-left">
+              <div className="telemetry-card">
+                <div className="card-top-header">
+                  <h2>7-Stage Multi-Agent Execution Graph</h2>
+                  <span className="tag-pills">Ticket #{activeTicket?.ticket_id || "None"}</span>
+                </div>
+                <p className="card-description">
+                  Sequential audit trace across all 7 specialized agents persisted in PostgreSQL.
+                </p>
+
+                {activeTicket?.workflow ? (
+                  <div className="workflow-stages-list">
+                    {activeTicket.workflow.map((item, index) => {
+                      const meta = AGENT_META[item.agent] || { icon: "⚡", desc: "Agent Step" };
+                      const isExpanded = expandedAgent === index;
+                      return (
+                        <div key={index} className="wf-stage-card">
+                          <div className="wf-card-header" onClick={() => setExpandedAgent(isExpanded ? null : index)}>
+                            <div className="wf-title-group">
+                              <span className="wf-icon">{meta.icon}</span>
+                              <div>
+                                <div className="wf-step-num">STAGE 0{index + 1}</div>
+                                <div className="wf-agent-name">{item.agent}</div>
+                              </div>
+                            </div>
+                            <span className="badge-done">COMPLETED</span>
+                          </div>
+
+                          <div className="wf-summary-snippet">
+                            {item.agent === "Ticket Triage Agent" && (
+                              <div>Category: <strong>{item.output.category}</strong> · Priority: <strong>{item.output.priority}</strong></div>
+                            )}
+                            {item.agent === "Knowledge / RAG Agent" && (
+                              <div>Matched <strong>{item.output.matches?.length || 0} Grounded Runbooks</strong> & Correlated <strong>{item.output.previous_tickets_investigated?.length || 0} Past Tickets</strong></div>
+                            )}
+                            {item.agent === "System Diagnosis Agent" && (
+                              <div>Diagnosis: <strong>{item.output.diagnosis}</strong></div>
+                            )}
+                            {item.agent === "Troubleshooting Agent" && (
+                              <div>Dynamic Rationale: <em>{item.output.dynamic_selection_reason || "Runbook tools"}</em></div>
+                            )}
+                            {item.agent === "Resolution Agent" && (
+                              <div>Tools Executed: {item.output.actions?.map(a => <code key={a.name} className="code-tag">{a.name} ({a.result?.status})</code>)}</div>
+                            )}
+                            {item.agent === "Verification Agent" && (
+                              <div>{item.output.verified ? "✓ Verified Clean" : "✕ Escalation Advised"}: {item.output.message}</div>
+                            )}
+                            {item.agent === "Escalation Agent" && (
+                              <div>Status: <strong>{item.output.status}</strong> · Confidence: {Math.round((item.output.confidence || 0) * 100)}%</div>
+                            )}
+                          </div>
+
+                          <button
+                            className="btn-expand-json"
+                            onClick={() => setExpandedAgent(isExpanded ? null : index)}
+                          >
+                            {isExpanded ? "▲ Hide Payload" : "▼ Inspect JSON Payload"}
+                          </button>
+
+                          {isExpanded && (
+                            <pre className="json-box">{JSON.stringify(item.output, null, 2)}</pre>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="empty-notice">No ticket telemetry selected. Send a message in Support Hub first.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="telemetry-right">
+              {/* Operator Supervision */}
+              <div className="telemetry-card operator-box">
+                <h3>👨‍💻 Human Operator Supervision</h3>
+                <p className="card-sub">Authorize manual overrides or tier-2 queue dispatch.</p>
+
+                <input
+                  type="text"
+                  className="op-input"
+                  placeholder="Supervisor note..."
+                  value={operatorNote}
+                  onChange={(e) => setOperatorNote(e.target.value)}
+                />
+
+                <div className="op-buttons-grid">
                   <button
-                    className="btn btn-primary btn-intake"
-                    onClick={handleInvestigate}
-                    disabled={loading || !issue.trim()}
+                    className="btn-op dispatch"
+                    onClick={() => handleOperatorAction("DISPATCH_TIER2")}
+                    disabled={actionLoading || !activeTicket}
                   >
-                    {loading ? (
-                      <>
-                        <span className="spinner"></span>
-                        Investigating Multi-Agent Runbooks...
-                      </>
-                    ) : (
-                      <>
-                        <span>⚡ Launch Autonomous IT Investigation</span>
-                      </>
-                    )}
+                    🚨 Dispatch Tier-2
+                  </button>
+                  <button
+                    className="btn-op approve"
+                    onClick={() => handleOperatorAction("APPROVE_AUTO_FIX")}
+                    disabled={actionLoading || !activeTicket}
+                  >
+                    ✓ Override & Fix
+                  </button>
+                  <button
+                    className="btn-op resolve"
+                    onClick={() => handleOperatorAction("RESOLVE_MANUAL")}
+                    disabled={actionLoading || !activeTicket}
+                  >
+                    🛡️ Mark Resolved
                   </button>
                 </div>
               </div>
 
-              {/* Quick Self-Service Runbooks Catalog */}
-              <div className="portal-card self-service-card">
-                <div className="card-header">
-                  <div className="card-title-group">
-                    <span className="card-icon">🛠️</span>
-                    <div>
-                      <h3>Self-Service IT Quick Actions</h3>
-                      <p className="card-sub">Trigger approved automated IT recovery actions instantly.</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="self-service-grid">
-                  <div
-                    className="action-tile"
-                    onClick={() => {
-                      setIssue("My VPN is disconnected and needs a session token refresh.");
-                    }}
-                  >
-                    <div className="tile-icon">🔒</div>
-                    <div className="tile-content">
-                      <div className="tile-title">Reset VPN Tunnel</div>
-                      <div className="tile-desc">Regenerate expired VPN tokens & gateway routes</div>
-                    </div>
-                  </div>
-
-                  <div
-                    className="action-tile"
-                    onClick={() => {
-                      setIssue("My account is locked due to wrong password attempts.");
-                    }}
-                  >
-                    <div className="tile-icon">🔑</div>
-                    <div className="tile-content">
-                      <div className="tile-title">Unlock Corporate Account</div>
-                      <div className="tile-desc">Verify identity and unlock AD account object</div>
-                    </div>
-                  </div>
-
-                  <div
-                    className="action-tile"
-                    onClick={() => {
-                      setIssue("Laptop cannot get Wi-Fi IP address or connect to network.");
-                    }}
-                  >
-                    <div className="tile-icon">📶</div>
-                    <div className="tile-content">
-                      <div className="tile-title">Renew DHCP & IP Lease</div>
-                      <div className="tile-desc">Release adapter lease and query DNS (1.1.1.1)</div>
-                    </div>
-                  </div>
-
-                  <div
-                    className="action-tile"
-                    onClick={() => {
-                      setIssue("The office printer is jamming and print spooler is offline.");
-                    }}
-                  >
-                    <div className="tile-icon">🖨️</div>
-                    <div className="tile-content">
-                      <div className="tile-title">Restart Print Spooler</div>
-                      <div className="tile-desc">Clear corrupt print buffer & restart spooler</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Live Frontdesk Resolution Display & My Requests */}
-            <div className="consumer-right-pane">
-              {/* Active Incident Resolution Card */}
-              {result ? (
-                <div className="portal-card resolution-hero-card">
-                  <div className="resolution-hero-header">
-                    <div className="ticket-meta-badge">
-                      <span className="tag">Incident #{result.ticket_id}</span>
-                      <span className={`status-pill ${isResolved ? "resolved" : "escalated"}`}>
-                        {isResolved ? "✅ RESOLUTION APPLIED" : "🛡️ ESCALATED TO IT TIER-2"}
-                      </span>
-                      <span className="priority-pill">{result.priority?.toUpperCase()} PRIORITY</span>
-                    </div>
-
-                    <div className="hero-issue-title">
-                      "{result.issue || issue}"
-                    </div>
-                  </div>
-
-                  {/* Dynamic Resolution Summary */}
-                  <div className="resolution-summary-box">
-                    <div className="box-title">
-                      {isResolved ? "🎉 Resolution Report & Actions Applied" : "⚠️ Supervisor Action Required"}
-                    </div>
-                    <p className="box-content">
-                      {result.resolution || "Fixora AI multi-agent workflow completed evaluation."}
-                    </p>
-
-                    {result.escalation_reason && (
-                      <div className="safety-gate-note">
-                        <span className="shield-icon">🛡️</span>
-                        <span><strong>Safety Gate Policy:</strong> {result.escalation_reason}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Multi-Agent Dynamic Investigation Summary */}
-                  <div className="investigation-insights-grid">
-                    <div className="insight-card">
-                      <div className="insight-label">🔬 Root Cause Diagnosis</div>
-                      <div className="insight-val">{result.diagnosis || "Correlated with IT telemetry."}</div>
-                    </div>
-                    <div className="insight-card">
-                      <div className="insight-label">🎯 AI Confidence</div>
-                      <div className="insight-val highlight">
-                        {Math.round((result.confidence || 0.85) * 100)}% Verified
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Dynamic Tools Selected (Key Challenge) */}
-                  {result.dynamic_tools && result.dynamic_tools.length > 0 && (
-                    <div className="dynamic-tool-box">
-                      <div className="tool-box-header">
-                        <span>⚙️ Dynamic Tool Selection Decision</span>
-                        <span className="dynamic-badge">Issue-Specific · Non-Fixed</span>
-                      </div>
-                      <div className="tool-chips-list">
-                        {result.dynamic_tools.map((dt, idx) => (
-                          <div key={idx} className={`tool-decision-chip ${dt.decision === "SELECTED" ? "selected" : "skipped"}`}>
-                            <span className="decision-marker">{dt.decision === "SELECTED" ? "✓" : "✕"}</span>
-                            <span className="tool-name">{dt.tool}</span>
-                            <span className="tool-reason">({dt.reason})</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* User Satisfaction Rating */}
-                  <div className="employee-feedback-bar">
-                    {feedbackSent ? (
-                      <div className="feedback-thankyou">
-                        ✨ Thank you! Your feedback has been recorded in the service desk metrics.
-                      </div>
-                    ) : (
-                      <>
-                        <span className="feedback-prompt">Did this resolution fix your issue?</span>
-                        <div className="feedback-buttons">
-                          <button className="btn-feedback" onClick={() => setFeedbackSent(true)}>
-                            👍 Yes, resolved!
-                          </button>
-                          <button className="btn-feedback" onClick={() => setFeedbackSent(true)}>
-                            👎 Need Operator
-                          </button>
-                          <button className="btn-feedback-telemetry" onClick={() => setShowTelemetryModal(true)}>
-                            🔍 Inspect Agentic Trace
-                          </button>
+              {/* Previous Tickets Correlated */}
+              {activeTicket?.previous_tickets && activeTicket.previous_tickets.length > 0 && (
+                <div className="telemetry-card">
+                  <h3>🔍 Previous Similar Tickets</h3>
+                  <div className="prev-tickets-col">
+                    {activeTicket.previous_tickets.map((pt) => (
+                      <div key={pt.ticket_id} className="pt-card">
+                        <div className="pt-top">
+                          <span>Ticket #{pt.ticket_id}</span>
+                          <span className="pt-badge">{pt.status}</span>
                         </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="portal-card empty-hero-card">
-                  <div className="empty-icon">⚡</div>
-                  <h3>No Active Incident Selected</h3>
-                  <p>Submit an issue above or pick an incident simulation to view the autonomous multi-agent resolution.</p>
-                </div>
-              )}
-
-              {/* My Recent Requests & Audit Timeline */}
-              <div className="portal-card requests-card">
-                <div className="card-header">
-                  <div className="card-title-group">
-                    <span className="card-icon">📋</span>
-                    <div>
-                      <h3>My Recent Support Requests</h3>
-                      <p className="card-sub">PostgreSQL-audited history of all automated and escalated tickets.</p>
-                    </div>
-                  </div>
-                  <div className="filter-pills">
-                    <button className={`filter-btn ${filter === "ALL" ? "active" : ""}`} onClick={() => setFilter("ALL")}>All ({tickets.length})</button>
-                    <button className={`filter-btn ${filter === "RESOLVED" ? "active" : ""}`} onClick={() => setFilter("RESOLVED")}>Resolved ({resolvedCount})</button>
-                    <button className={`filter-btn ${filter === "ESCALATED" ? "active" : ""}`} onClick={() => setFilter("ESCALATED")}>Escalated ({escalatedCount})</button>
-                  </div>
-                </div>
-
-                <div className="requests-timeline">
-                  {tickets.length === 0 ? (
-                    <div className="empty-list">No tickets created yet. Submit a test scenario above.</div>
-                  ) : (
-                    tickets
-                      .filter(t => {
-                        if (filter === "RESOLVED") return t.status === "RESOLUTION_READY" || t.status === "RESOLVED_BY_HUMAN";
-                        if (filter === "ESCALATED") return t.status === "ESCALATE_TO_HUMAN" || t.status === "DISPATCHED_TO_TIER2";
-                        return true;
-                      })
-                      .map((t) => (
-                        <div
-                          key={t.id}
-                          className={`request-item ${result?.ticket_id === t.id ? "selected-ticket" : ""}`}
-                          onClick={() => handleSelectTicket(t.id)}
-                        >
-                          <div className="req-header">
-                            <span className="req-id">#{t.id}</span>
-                            <span className="req-category">{t.category?.toUpperCase() || "GENERAL"}</span>
-                            <span className={`status-pill small ${t.status === "RESOLUTION_READY" || t.status === "RESOLVED_BY_HUMAN" ? "resolved" : "escalated"}`}>
-                              {t.status.replace(/_/g, " ")}
-                            </span>
-                          </div>
-                          <div className="req-body">{t.issue}</div>
-                          <div className="req-footer">
-                            <span className="req-prio">Priority: {t.priority || "Normal"}</span>
-                            <span className="req-action">Click to inspect →</span>
-                          </div>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Mode 2: IT Specialist & Multi-Agent Telemetry Console */}
-        {deskMode === "specialist" && (
-          <div className="specialist-console-layout">
-            {/* Top Metrics Row */}
-            <div className="metrics-grid">
-              <div className="metric-card">
-                <div className="metric-label">TOTAL AUDITED TICKETS</div>
-                <div className="metric-val">{totalCount}</div>
-                <div className="metric-sub">Persisted in PostgreSQL</div>
-              </div>
-              <div className="metric-card">
-                <div className="metric-label">AUTONOMOUS RESOLUTION RATE</div>
-                <div className="metric-val highlight">{resolutionRate}%</div>
-                <div className="metric-sub">{resolvedCount} Verified Auto-Fixes</div>
-              </div>
-              <div className="metric-card">
-                <div className="metric-label">SAFETY ESCALATIONS</div>
-                <div className="metric-val">{escalatedCount}</div>
-                <div className="metric-sub">Gated for Human Review</div>
-              </div>
-              <div className="metric-card">
-                <div className="metric-label">ACTIVE AGENT PIPELINES</div>
-                <div className="metric-val">7 Agents</div>
-                <div className="metric-sub">Triage → RAG → Diagnosis → Tools → Verify → Escalate</div>
-              </div>
-            </div>
-
-            <div className="specialist-columns">
-              {/* Left Column: Multi-Agent Execution Pipeline Trace */}
-              <div className="specialist-left">
-                <div className="portal-card">
-                  <div className="card-header">
-                    <div className="card-title-group">
-                      <span className="card-icon">🧭</span>
-                      <div>
-                        <h2>Sequential Multi-Agent Execution Graph</h2>
-                        <p className="card-sub">
-                          Real-time execution trail across all 7 specialized agents for Ticket #{result?.ticket_id || "None"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {result?.workflow ? (
-                    <div className="agent-timeline-wrapper">
-                      {result.workflow.map((item, index) => {
-                        const meta = AGENT_META[item.agent] || { icon: "⚡", desc: "Agent Stage" };
-                        const isExpanded = expandedAgent === index;
-                        return (
-                          <div key={index} className="agent-stage-row">
-                            <div className="stage-left-rail">
-                              <div className="stage-icon-circle">{meta.icon}</div>
-                              {index < result.workflow.length - 1 && <div className="stage-connector-line"></div>}
-                            </div>
-                            <div className="stage-card">
-                              <div className="stage-header" onClick={() => setExpandedAgent(isExpanded ? null : index)}>
-                                <div className="stage-title-block">
-                                  <span className="stage-step-num">STAGE 0{index + 1}</span>
-                                  <span className="stage-name">{item.agent}</span>
-                                </div>
-                                <span className="stage-status-badge">COMPLETED</span>
-                              </div>
-                              <div className="stage-desc">{meta.desc}</div>
-
-                              {/* Stage summary snippet */}
-                              <div className="stage-summary">
-                                {item.agent === "Ticket Triage Agent" && (
-                                  <div>Category: <strong>{item.output.category}</strong> · Priority: <strong>{item.output.priority}</strong></div>
-                                )}
-                                {item.agent === "Knowledge / RAG Agent" && (
-                                  <div>
-                                    Matched <strong>{item.output.matches?.length || 0} Grounded Runbooks</strong>
-                                    {item.output.previous_tickets_investigated && (
-                                      <span> · Correlated <strong>{item.output.previous_tickets_investigated.length} Previous Tickets</strong></span>
-                                    )}
-                                  </div>
-                                )}
-                                {item.agent === "System Diagnosis Agent" && (
-                                  <div>Diagnosis: <strong>{item.output.diagnosis}</strong></div>
-                                )}
-                                {item.agent === "Troubleshooting Agent" && (
-                                  <div>
-                                    Dynamic Tool Rationale: <em>{item.output.dynamic_selection_reason || "Selected runbook toolset."}</em>
-                                  </div>
-                                )}
-                                {item.agent === "Resolution Agent" && (
-                                  <div>Executed Tools: {item.output.actions?.map(a => <code key={a.name} className="tool-code">{a.name} ({a.result?.status})</code>)}</div>
-                                )}
-                                {item.agent === "Verification Agent" && (
-                                  <div className="verify-note">
-                                    {item.output.verified ? "✓ Verification Passed" : "✕ Human follow-up recommended"}: {item.output.message}
-                                  </div>
-                                )}
-                                {item.agent === "Escalation Agent" && (
-                                  <div>Decision: <strong>{item.output.status}</strong> (Confidence: {Math.round((item.output.confidence || 0) * 100)}%)</div>
-                                )}
-                              </div>
-
-                              <button
-                                className="btn-toggle-json"
-                                onClick={() => setExpandedAgent(isExpanded ? null : index)}
-                              >
-                                {isExpanded ? "▲ Hide Raw Telemetry" : "▼ Inspect JSON Payload"}
-                              </button>
-
-                              {isExpanded && (
-                                <pre className="json-viewer">
-                                  {JSON.stringify(item.output, null, 2)}
-                                </pre>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="empty-state">No agent telemetry loaded yet.</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Column: Operator Intervention Desk & Grounded Citations */}
-              <div className="specialist-right">
-                {/* Operator Supervision Box */}
-                <div className="portal-card operator-card">
-                  <div className="card-header">
-                    <div className="card-title-group">
-                      <span className="card-icon">👨‍💻</span>
-                      <div>
-                        <h3>Human-in-the-Loop Operator Desk</h3>
-                        <p className="card-sub">Supervise autonomous decisions and execute manual overrides.</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="operator-body">
-                    <label className="input-label">Operator Note (Optional):</label>
-                    <input
-                      type="text"
-                      className="text-input"
-                      placeholder="e.g. Approved override after checking network telemetry..."
-                      value={actionNote}
-                      onChange={(e) => setActionNote(e.target.value)}
-                    />
-
-                    <div className="operator-actions-grid">
-                      <button
-                        className="btn btn-action dispatch"
-                        onClick={() => handleOperatorAction("DISPATCH_TIER2")}
-                        disabled={actionLoading || !result}
-                      >
-                        🚨 Dispatch to Tier-2
-                      </button>
-                      <button
-                        className="btn btn-action approve"
-                        onClick={() => handleOperatorAction("APPROVE_AUTO_FIX")}
-                        disabled={actionLoading || !result}
-                      >
-                        ✓ Approve Auto-Fix Override
-                      </button>
-                      <button
-                        className="btn btn-action resolve"
-                        onClick={() => handleOperatorAction("RESOLVE_MANUAL")}
-                        disabled={actionLoading || !result}
-                      >
-                        🛡️ Mark Manually Resolved
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Previous Tickets Investigated (Problem Statement #12) */}
-                {result?.previous_tickets && result.previous_tickets.length > 0 && (
-                  <div className="portal-card">
-                    <div className="card-header">
-                      <div className="card-title-group">
-                        <span className="card-icon">🔍</span>
-                        <div>
-                          <h3>Previous Tickets Correlated</h3>
-                          <p className="card-sub">Investigated from database as context for current issue.</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="prev-tickets-list">
-                      {result.previous_tickets.map((pt) => (
-                        <div key={pt.ticket_id} className="prev-ticket-item">
-                          <div className="pt-header">
-                            <span className="pt-id">Ticket #{pt.ticket_id}</span>
-                            <span className="pt-cat">{pt.category}</span>
-                            <span className="pt-status">{pt.status}</span>
-                          </div>
-                          <div className="pt-issue">{pt.issue}</div>
-                          <div className="pt-res"><strong>Resolution:</strong> {pt.resolution}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Grounded Evidence Runbooks */}
-                <div className="portal-card">
-                  <div className="card-header">
-                    <div className="card-title-group">
-                      <span className="card-icon">📖</span>
-                      <div>
-                        <h3>Grounded Evidence Citations</h3>
-                        <p className="card-sub">PostgreSQL Knowledge runbooks used for deterministic safety.</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="evidence-list">
-                    {result?.evidence?.map((ev) => (
-                      <div key={ev.code} className="evidence-item">
-                        <div className="evidence-badge">{ev.code}</div>
-                        <div className="evidence-title">{ev.title}</div>
-                        <div className="evidence-reason">{ev.reason}</div>
+                        <div className="pt-text">{pt.issue}</div>
+                        <div className="pt-res">{pt.resolution}</div>
                       </div>
                     ))}
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* Mode 3: Knowledge Base Runbooks Catalog */}
-        {deskMode === "kb" && (
-          <div className="kb-catalog-layout">
-            <div className="portal-card">
-              <div className="card-header">
-                <div className="card-title-group">
-                  <span className="card-icon">📚</span>
-                  <div>
-                    <h2>Enterprise IT Knowledge Base Runbooks</h2>
-                    <p className="card-sub">
-                      Deterministic standard operating procedures (SOPs) synced with PostgreSQL.
-                    </p>
+        {/* View 3: Knowledge Base Runbooks */}
+        {activeView === "kb" && (
+          <div className="kb-view-layout">
+            <h2>📚 Enterprise IT Knowledge Base Runbooks</h2>
+            <div className="kb-cards-grid">
+              {kbArticles.map((article) => (
+                <div key={article.code} className="kb-runbook-card">
+                  <div className="kb-top-row">
+                    <span className="kb-code-pill">{article.code}</span>
+                    <span className="kb-cat-pill">{article.category.toUpperCase()}</span>
                   </div>
+                  <h3>{article.title}</h3>
+                  <p>{article.content}</p>
+                  <div className="kb-steps-box">
+                    <strong>Standard Steps:</strong>
+                    <ol>
+                      {article.steps.map((s, idx) => (
+                        <li key={idx}>{s}</li>
+                      ))}
+                    </ol>
+                  </div>
+                  <button
+                    className="btn-test-runbook"
+                    onClick={() => {
+                      setActiveView("chat");
+                      handleSendMessage(`Troubleshoot ${article.title.toLowerCase()}`);
+                    }}
+                  >
+                    ⚡ Test Runbook in Chat
+                  </button>
                 </div>
-              </div>
-
-              <div className="kb-grid">
-                {kbArticles.map((article) => (
-                  <div key={article.code} className="kb-article-card">
-                    <div className="kb-badge-row">
-                      <span className="kb-code">{article.code}</span>
-                      <span className="kb-category">{article.category.toUpperCase()}</span>
-                    </div>
-                    <h3 className="kb-title">{article.title}</h3>
-                    <p className="kb-content">{article.content}</p>
-
-                    <div className="kb-steps-section">
-                      <div className="steps-title">Troubleshooting Steps:</div>
-                      <ol className="kb-steps-list">
-                        {article.steps.map((s, idx) => (
-                          <li key={idx}>{s}</li>
-                        ))}
-                      </ol>
-                    </div>
-
-                    <div className="kb-tools-section">
-                      <span className="tools-title">Approved IT Tools:</span>
-                      <div className="tools-chips">
-                        {article.tools.map((t) => (
-                          <span key={t} className="tool-chip">{t}</span>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      className="btn btn-secondary btn-run-kb"
-                      onClick={() => {
-                        setIssue(`Troubleshoot ${article.title.toLowerCase()}`);
-                        setDeskMode("consumer");
-                      }}
-                    >
-                      ⚡ Test this Runbook
-                    </button>
-                  </div>
-                ))}
-              </div>
+              ))}
             </div>
           </div>
         )}
       </main>
 
-      {/* Deep Telemetry Modal */}
-      {showTelemetryModal && (
-        <div className="modal-overlay" onClick={() => setShowTelemetryModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>🔍 Multi-Agent Telemetry & Decision Tree</h3>
-              <button className="btn-close" onClick={() => setShowTelemetryModal(false)}>✕</button>
+      {/* Live Audio Call Modal Screen */}
+      {isCallActive && (
+        <div className="voice-call-overlay">
+          <div className="voice-call-modal">
+            <div className="call-header">
+              <div className="calling-tag">LIVE AI AUDIO CALL</div>
+              <div className="call-timer">{formatCallTime(callDuration)}</div>
             </div>
-            <div className="modal-body">
-              <h4>Sequential Agent Runs:</h4>
-              <pre className="json-viewer">
-                {JSON.stringify(result?.workflow || {}, null, 2)}
-              </pre>
+
+            {/* Glowing Voice Orb */}
+            <div className="voice-orb-container">
+              <div className={`voice-orb ${isSpeaking ? "speaking" : "listening"}`}>
+                <div className="orb-inner">⚡</div>
+                <div className="orb-ring ring-1"></div>
+                <div className="orb-ring ring-2"></div>
+                <div className="orb-ring ring-3"></div>
+              </div>
+            </div>
+
+            <div className="voice-status-text">
+              {isSpeaking ? "Fixora AI is speaking..." : "Listening to your microphone..."}
+            </div>
+
+            {/* Live Transcript Box */}
+            <div className="live-transcript-box">
+              <div className="transcript-label">Live Call Audio Transcript:</div>
+              <p className="transcript-body">{callTranscript}</p>
+            </div>
+
+            {/* Quick voice simulation chips */}
+            <div className="voice-quick-chips">
+              <span>Speak a scenario:</span>
+              <button onClick={() => processVoiceCallInput("My VPN is offline and timing out.")}>🔒 VPN Stalled</button>
+              <button onClick={() => processVoiceCallInput("Printer is jamming and spooler offline.")}>🖨️ Printer Jam</button>
+              <button onClick={() => processVoiceCallInput("My account is locked out.")}>🔑 Account Lock</button>
+            </div>
+
+            {/* Call Action Controls */}
+            <div className="call-controls-bar">
+              <button
+                className={`btn-call-ctrl ${isMuted ? "muted" : ""}`}
+                onClick={() => setIsMuted(!isMuted)}
+              >
+                {isMuted ? "🔇 Unmute" : "🎙️ Mute"}
+              </button>
+              <button className="btn-call-ctrl end-call-btn" onClick={endAudioCall}>
+                🔴 End Call
+              </button>
+              <button
+                className="btn-call-ctrl"
+                onClick={() => speakText(callTranscript)}
+              >
+                🔊 Replay Voice
+              </button>
             </div>
           </div>
         </div>

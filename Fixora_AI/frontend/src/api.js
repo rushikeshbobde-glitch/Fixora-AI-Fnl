@@ -58,4 +58,26 @@ export async function getSystemStatus() {
   return response.json();
 }
 
+export async function sendVoiceChatMessage(message, employeeName = "Jane Doe", employeeEmail = "jane.doe@fixora.local", isVoiceCall = false, ticketId = null) {
+  const response = await fetch(`${API}/chat`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      message,
+      employee_name: employeeName,
+      employee_email: employeeEmail,
+      is_voice_call: isVoiceCall,
+      ticket_id: ticketId
+    })
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Chat request failed");
+  }
+
+  return response.json();
+}
+
+
 

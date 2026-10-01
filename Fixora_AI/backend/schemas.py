@@ -51,3 +51,19 @@ class KnowledgeArticleSchema(BaseModel):
     steps: list[str] = []
     tools: list[str] = []
 
+
+class VoiceChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    ticket_id: int | None = None
+    employee_name: str = "Jane Doe"
+    employee_email: str = "jane.doe@fixora.local"
+    is_voice_call: bool = False
+
+
+class VoiceChatResponse(BaseModel):
+    reply: str
+    spoken_audio_text: str
+    ticket: TicketResponse | None = None
+    action_type: str = "CONVERSATIONAL" # 'INVESTIGATED' | 'CONVERSATIONAL' | 'AUTO_FIXED' | 'ESCALATED'
+
+
