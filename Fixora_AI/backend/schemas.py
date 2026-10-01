@@ -30,6 +30,7 @@ class TicketResponse(BaseModel):
 
 class TicketListItem(BaseModel):
     id: int
+    ticket_number: str | None = None
     issue: str
     status: str
     category: str | None
@@ -64,6 +65,32 @@ class VoiceChatResponse(BaseModel):
     reply: str
     spoken_audio_text: str
     ticket: TicketResponse | None = None
-    action_type: str = "CONVERSATIONAL" # 'INVESTIGATED' | 'CONVERSATIONAL' | 'AUTO_FIXED' | 'ESCALATED'
+    action_type: str = "CONVERSATIONAL"
+
+
+class SupportEvent(BaseModel):
+    stage: str
+    name: str
+    status: str
+    detail: str
+
+
+class SupportRequest(BaseModel):
+    message: str = Field(min_length=1)
+    source: str = "text"
+    employee_name: str = "Sarah Connor"
+    employee_email: str = "sarah.connor@fixora.local"
+
+
+class SupportResponse(BaseModel):
+    ticket_id: int
+    ticket_number: str
+    status: str
+    category: str | None = None
+    priority: str | None = None
+    reply: str
+    events: list[SupportEvent] = []
+    created_at: datetime | None = None
+
 
 

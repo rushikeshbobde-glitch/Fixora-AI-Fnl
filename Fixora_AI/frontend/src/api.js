@@ -71,13 +71,30 @@ export async function sendVoiceChatMessage(message, employeeName = "Jane Doe", e
     })
   });
 
+  return response.json();
+}
+
+export async function sendSupportRequest(message, source = "text", employeeName = "Sarah Connor", employeeEmail = "sarah.connor@fixora.local") {
+
+  const response = await fetch(`${API}/support`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      message,
+      source,
+      employee_name: employeeName,
+      employee_email: employeeEmail
+    })
+  });
+
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail || "Chat request failed");
+    throw new Error(data.detail || "I couldn't reach the Fixora service desk. Please make sure the backend is running and try again.");
   }
 
   return response.json();
 }
+
 
 
 
