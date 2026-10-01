@@ -3,6 +3,21 @@ from backend.db.models import Employee, KnowledgeArticle
 
 ARTICLES = [
     {
+        "code": "KB-BOOT-001",
+        "title": "PC and Workstation Boot / Power Failure Troubleshooting",
+        "category": "hardware",
+        "content": "Diagnose and resolve workstation boot failure, power loss, black screen, and POST halt conditions.",
+        "steps": [
+            "Check AC power cord and outlet indicator LED.",
+            "Perform hardware residual power drain (hold power button for 30s).",
+            "Disconnect external USB peripherals, hubs, and second displays.",
+            "Verify internal display cable and backlight.",
+            "Attempt cold reboot and listen for BIOS POST diagnostic beeps.",
+            "Escalate to Desktop Hardware Support if motherboard or PSU failure."
+        ],
+        "tools": ["check_device", "hardware_power_diagnostic"]
+    },
+    {
         "code": "KB-VPN-001",
         "title": "VPN connection troubleshooting",
         "category": "vpn",
@@ -45,22 +60,22 @@ ARTICLES = [
     },
     {
         "code": "KB-DEV-001",
-        "title": "Device and Peripheral Troubleshooting",
+        "title": "Workstation Performance and Device Diagnostics",
         "category": "device",
-        "content": "Troubleshoot common laptop, peripheral, and device driver problems using automated diagnostics.",
+        "content": "Troubleshoot laptop sluggishness, application freezing, and peripheral driver faults.",
         "steps": [
-            "Check device system health and driver status.",
-            "Collect basic hardware diagnostics.",
-            "Restart affected device service.",
-            "Verify device status.",
+            "Check CPU and memory utilization thresholds.",
+            "Terminate orphaned background crash reporting processes.",
+            "Clear temporary OS cache and swap buffer.",
+            "Verify system responsiveness and driver health.",
             "Escalate suspected hardware failure."
         ],
-        "tools": ["check_device"]
+        "tools": ["check_device", "clean_temp_cache"]
     },
     {
         "code": "KB-PRN-001",
         "title": "Office Printer and Spooler Troubleshooting",
-        "category": "device",
+        "category": "printer",
         "content": "Diagnose and resolve office printer stalls, offline status, and print spooler queue jams.",
         "steps": [
             "Check printer status on local subnet.",
@@ -70,8 +85,23 @@ ARTICLES = [
             "Escalate if mechanical or toner hardware error."
         ],
         "tools": ["check_device", "restart_print_spooler"]
+    },
+    {
+        "code": "KB-SOFT-001",
+        "title": "Software Installation and License Provisioning",
+        "category": "software",
+        "content": "Assist employees with installing corporate productivity software, developer tools, and license activations.",
+        "steps": [
+            "Check software catalog for approved application package.",
+            "Verify user role entitlement in Microsoft Intune / Jamf.",
+            "Push automated background silent installation package.",
+            "Confirm software icon appears in Start menu.",
+            "Escalate if custom license key or admin elevation required."
+        ],
+        "tools": ["check_device", "verify_software_license"]
     }
 ]
+
 
 
 def seed_database(db):
