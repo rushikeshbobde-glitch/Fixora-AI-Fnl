@@ -6,57 +6,70 @@ ARTICLES = [
         "code": "KB-VPN-001",
         "title": "VPN connection troubleshooting",
         "category": "vpn",
-        "content": "Troubleshoot an employee VPN connection using approved client and connectivity checks.",
+        "content": "Troubleshoot an employee VPN connection using approved client, gateway diagnostic and session refresh checks.",
         "steps": [
-            "Check VPN client status.",
-            "Confirm network connectivity.",
-            "Refresh the VPN session.",
-            "Retry the approved VPN connection.",
-            "Escalate if authentication or gateway checks fail."
+            "Check VPN client status and reachability.",
+            "Confirm corporate gateway network connectivity.",
+            "Execute approved VPN session refresh.",
+            "Retry secure gateway handshake.",
+            "Escalate if authentication or gateway handshake fails."
         ],
-        "tools": ["check_network", "check_vpn"]
+        "tools": ["check_network", "check_vpn", "reset_vpn_session"]
     },
     {
         "code": "KB-NET-001",
-        "title": "Wi-Fi connection troubleshooting",
+        "title": "Wi-Fi and Local Network Troubleshooting",
         "category": "network",
-        "content": "Troubleshoot employee Wi-Fi connectivity.",
+        "content": "Troubleshoot employee Wi-Fi and DHCP connectivity issues through simulated adapter and lease renewal checks.",
         "steps": [
-            "Check network connectivity.",
-            "Refresh the network adapter.",
-            "Reconnect to the approved network.",
-            "Verify connectivity.",
-            "Escalate if the issue persists."
+            "Check network adapter and latency.",
+            "Release and renew DHCP lease.",
+            "Verify DNS resolution and default gateway.",
+            "Escalate if signal or hardware fault persists."
         ],
-        "tools": ["check_network"]
+        "tools": ["check_network", "renew_dhcp_lease"]
     },
     {
         "code": "KB-AUTH-001",
-        "title": "Account and password troubleshooting",
+        "title": "Account Lockout and Password Troubleshooting",
         "category": "authentication",
-        "content": "Troubleshoot account lockout and password issues using approved identity checks.",
+        "content": "Troubleshoot account lockout and password issues using approved identity verification and directory unlocking.",
         "steps": [
-            "Confirm the employee identity.",
-            "Check account status.",
-            "Run the approved authentication diagnostic.",
-            "Use the approved password-reset workflow if permitted.",
+            "Confirm employee identity in directory.",
+            "Check account lockout status.",
+            "Execute automated account unlock if policy allows.",
+            "Send secure self-service password reset link.",
             "Escalate if identity or account state cannot be verified."
         ],
-        "tools": ["check_auth"]
+        "tools": ["check_auth", "unlock_user_account"]
     },
     {
         "code": "KB-DEV-001",
-        "title": "Device troubleshooting",
+        "title": "Device and Peripheral Troubleshooting",
         "category": "device",
-        "content": "Troubleshoot common laptop and peripheral problems.",
+        "content": "Troubleshoot common laptop, peripheral, and device driver problems using automated diagnostics.",
         "steps": [
-            "Check device status.",
-            "Collect basic diagnostics.",
-            "Restart the affected service or device when approved.",
+            "Check device system health and driver status.",
+            "Collect basic hardware diagnostics.",
+            "Restart affected device service.",
             "Verify device status.",
             "Escalate suspected hardware failure."
         ],
         "tools": ["check_device"]
+    },
+    {
+        "code": "KB-PRN-001",
+        "title": "Office Printer and Spooler Troubleshooting",
+        "category": "device",
+        "content": "Diagnose and resolve office printer stalls, offline status, and print spooler queue jams.",
+        "steps": [
+            "Check printer status on local subnet.",
+            "Verify Windows Print Spooler service state.",
+            "Execute automated print spooler restart and clear queue.",
+            "Send test print job to verify online readiness.",
+            "Escalate if mechanical or toner hardware error."
+        ],
+        "tools": ["check_device", "restart_print_spooler"]
     }
 ]
 
@@ -69,8 +82,16 @@ def seed_database(db):
             department="Engineering"
         ))
 
-    if not db.query(KnowledgeArticle).first():
-        for item in ARTICLES:
+    for item in ARTICLES:
+        existing = db.query(KnowledgeArticle).filter(KnowledgeArticle.code == item["code"]).first()
+        if not existing:
             db.add(KnowledgeArticle(**item))
+        else:
+            existing.title = item["title"]
+            existing.category = item["category"]
+            existing.content = item["content"]
+            existing.steps = item["steps"]
+            existing.tools = item["tools"]
 
     db.commit()
+
