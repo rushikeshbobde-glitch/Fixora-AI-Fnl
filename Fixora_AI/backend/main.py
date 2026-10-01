@@ -18,8 +18,9 @@ from backend.schemas import (
     SupportResponse,
     SupportEvent
 )
-from backend.services.ai_service import synthesize_voice_response
+from backend.services.ai_service import synthesize_voice_response, synthesize_humanized_solution
 from backend.agents.orchestrator import run_workflow
+
 
 
 
@@ -157,15 +158,24 @@ def handle_voice_chat(payload: VoiceChatRequest, db: Session = Depends(get_db)):
             tools_executed=tools_executed
         )
 
+        reply_text = synthesize_humanized_solution(
+            issue=ticket_res["issue"],
+            status=ticket_res["status"],
+            category=ticket_res.get("category") or "general",
+            diagnosis=ticket_res.get("diagnosis") or "Diagnostics evaluated",
+            resolution=ticket_res.get("resolution") or "Standard automated remediation applied",
+            tools_executed=tools_executed,
+            ticket_number=f"INC-{ticket.id:03d}",
+            priority=ticket_res.get("priority") or "medium"
+        )
+
         return VoiceChatResponse(
-            reply=f"I've initiated an autonomous IT investigation for: **\"{msg}\"**.\n\n"
-                  f"• **Diagnosis**: {ticket_res.get('diagnosis')}\n"
-                  f"• **Actions Applied**: {ticket_res.get('resolution')}\n"
-                  f"• **Status**: {ticket_res.get('status').replace('_', ' ')}",
+            reply=reply_text,
             spoken_audio_text=spoken_text,
             ticket=ticket_res,
             action_type="AUTO_FIXED" if ticket_res["status"] == "RESOLUTION_READY" else "ESCALATED"
         )
+
     else:
         spoken = "Hello! I am Fixora AI, your autonomous IT helpdesk agent. Tell me what tech trouble you are experiencing or speak with me on this audio call to resolve it!"
         return VoiceChatResponse(
@@ -264,17 +274,18 @@ def handle_support_request(payload: SupportRequest, db: Session = Depends(get_db
         detail="Autonomous resolution confirmed and verified." if is_verified else "Safety boundary reached: escalated to Human IT Support."
     ))
 
-    # Generate friendly reply text
-    if is_verified:
-        reply = (
-            f"I diagnosed the issue as **{ticket_res.get('diagnosis')}**.\n"
-            f"{ticket_res.get('resolution')} All verification checks passed and your issue is resolved."
-        )
-    else:
-        reply = (
-            f"I checked your issue and determined that **{ticket_res.get('escalation_reason')}**.\n"
-            f"I have safely created ticket **#{ticket_num}** and escalated it to our Senior IT Support team with full diagnostic telemetry."
-        )
+    # Generate warm, humanized, frontdesk specialist solution with actionable instructions
+    reply = synthesize_humanized_solution(
+        issue=msg,
+        status=final_status,
+        category=ticket_res.get("category") or "general",
+        diagnosis=ticket_res.get("diagnosis") or "Diagnostics evaluated",
+        resolution=ticket_res.get("resolution") or "Standard automated remediation applied",
+        tools_executed=selected_tools,
+        ticket_number=ticket_num,
+        priority=ticket_res.get("priority") or "medium"
+    )
+
 
     return SupportResponse(
         ticket_id=ticket.id,
