@@ -96,11 +96,43 @@ def list_tickets(db: Session = Depends(get_db)):
     return db.query(Ticket).order_by(Ticket.id.desc()).limit(50).all()
 
 
+@app.get("/api/system-status")
+def get_system_status():
+    return {
+        "overall_status": "OPERATIONAL",
+        "last_probed": "Just now",
+        "services": [
+            {"name": "Corporate VPN Gateway (vpn.fixora.internal)", "status": "OPERATIONAL", "latency": "18ms", "load": "42%"},
+            {"name": "Azure AD / Directory Federation", "status": "OPERATIONAL", "latency": "35ms", "load": "18%"},
+            {"name": "Office Network DHCP & DNS (1.1.1.1)", "status": "OPERATIONAL", "latency": "4ms", "load": "29%"},
+            {"name": "Windows Print Spooler Hub", "status": "DEGRADED", "latency": "120ms", "load": "74%", "note": "Queue stall auto-remediated"},
+            {"name": "PostgreSQL Telemetry Audit Store", "status": "OPERATIONAL", "latency": "2ms", "load": "11%"}
+        ]
+    }
+
+
 @app.get("/api/tickets/{ticket_id}", response_model=TicketResponse)
 def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+
+    workflow = [
+        {"agent": r.agent_name, "output": r.output}
+        for r in ticket.runs
+    ]
+
+    # Extract rich telemetry if stored in runs
+    previous_tickets = []
+    system_status = {}
+    dynamic_tools = []
+    for r in ticket.runs:
+        if r.agent_name == "Knowledge / RAG Agent" and isinstance(r.output, dict):
+            previous_tickets = r.output.get("previous_tickets_investigated", [])
+        elif r.agent_name == "System Diagnosis Agent" and isinstance(r.output, dict):
+            system_status = r.output.get("system_status", {})
+        elif r.agent_name == "Troubleshooting Agent" and isinstance(r.output, dict):
+            dynamic_tools = r.output.get("evaluated_tools", [])
 
     return {
         "ticket_id": ticket.id,
@@ -113,15 +145,16 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
         "escalation_reason": ticket.escalation_reason,
         "confidence": ticket.confidence,
         "created_at": ticket.created_at,
+        "previous_tickets": previous_tickets,
+        "system_status": system_status,
+        "dynamic_tools": dynamic_tools,
         "evidence": [
             {"code": e.source_code, "title": e.title, "reason": e.reason}
             for e in ticket.evidence
         ],
-        "workflow": [
-            {"agent": r.agent_name, "output": r.output}
-            for r in ticket.runs
-        ]
+        "workflow": workflow
     }
+
 
 
 @app.post("/api/tickets/{ticket_id}/action", response_model=TicketResponse)

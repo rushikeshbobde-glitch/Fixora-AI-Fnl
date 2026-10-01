@@ -22,6 +22,10 @@ class TicketResponse(BaseModel):
     evidence: list[dict[str, Any]]
     workflow: list[dict[str, Any]]
     created_at: datetime | None = None
+    previous_tickets: list[dict[str, Any]] = []
+    system_status: dict[str, Any] = {}
+    dynamic_tools: list[dict[str, Any]] = []
+
 
 
 class TicketListItem(BaseModel):
