@@ -13,10 +13,14 @@ from backend.schemas import (
     OperatorActionPayload,
     KnowledgeArticleSchema,
     VoiceChatRequest,
-    VoiceChatResponse
+    VoiceChatResponse,
+    SupportRequest,
+    SupportResponse,
+    SupportEvent
 )
 from backend.services.ai_service import synthesize_voice_response
 from backend.agents.orchestrator import run_workflow
+
 
 
 from contextlib import asynccontextmanager
@@ -173,9 +177,134 @@ def handle_voice_chat(payload: VoiceChatRequest, db: Session = Depends(get_db)):
 
 
 
+@app.post("/api/support", response_model=SupportResponse)
+def handle_support_request(payload: SupportRequest, db: Session = Depends(get_db)):
+    msg = payload.message.strip()
+
+    # Locate or create employee
+    employee = db.query(Employee).filter(Employee.email == payload.employee_email).first()
+    if not employee:
+        employee = Employee(
+            name=payload.employee_name,
+            email=payload.employee_email,
+            department="Corporate User"
+        )
+        db.add(employee)
+        db.commit()
+        db.refresh(employee)
+
+    # Create ticket
+    ticket = Ticket(
+        employee_id=employee.id,
+        issue=msg,
+        status="INVESTIGATING"
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+
+    ticket_res = run_workflow(db, ticket)
+    ticket_num = f"INC-{ticket.id:03d}"
+
+    # Build standard 7-stage events array
+    events = []
+    workflow_dict = {w["agent"]: w["output"] for w in ticket_res.get("workflow", [])}
+
+    triage_out = workflow_dict.get("Ticket Triage Agent", {})
+    events.append(SupportEvent(
+        stage="triage",
+        name="Triage",
+        status="completed",
+        detail=f"Classified as {ticket_res.get('category', 'general')} issue; priority {ticket_res.get('priority', 'medium')}."
+    ))
+
+    events.append(SupportEvent(
+        stage="knowledge",
+        name="Knowledge / RAG",
+        status="completed",
+        detail=f"Retrieved relevant {ticket_res.get('category', 'IT')} troubleshooting article & previous ticket precedents."
+    ))
+
+    events.append(SupportEvent(
+        stage="diagnosis",
+        name="System Diagnosis",
+        status="completed",
+        detail=ticket_res.get("diagnosis") or "System parameters and diagnostics evaluated."
+    ))
+
+    tools_eval = ticket_res.get("dynamic_tools", [])
+    selected_tools = [dt["tool"] for dt in tools_eval if dt.get("decision") == "SELECTED"]
+    events.append(SupportEvent(
+        stage="troubleshooting",
+        name="Troubleshooting",
+        status="completed",
+        detail=f"Selected safe tools: {', '.join(selected_tools) if selected_tools else 'Standard diagnostic SOP'}."
+    ))
+
+    events.append(SupportEvent(
+        stage="resolution",
+        name="Resolution",
+        status="completed",
+        detail=ticket_res.get("resolution") or "Simulated diagnostic actions executed safely."
+    ))
+
+    is_verified = ticket_res.get("status") in ["RESOLUTION_READY", "RESOLVED_BY_HUMAN"]
+    events.append(SupportEvent(
+        stage="verification",
+        name="Verification",
+        status="completed" if is_verified else "failed",
+        detail="Resolution verified successfully." if is_verified else "Verification indicates follow-up required."
+    ))
+
+    final_status = "resolved" if is_verified else "escalated"
+    events.append(SupportEvent(
+        stage="escalation",
+        name="Escalation",
+        status="completed",
+        detail="Autonomous resolution confirmed and verified." if is_verified else "Safety boundary reached: escalated to Human IT Support."
+    ))
+
+    # Generate friendly reply text
+    if is_verified:
+        reply = (
+            f"I diagnosed the issue as **{ticket_res.get('diagnosis')}**.\n"
+            f"{ticket_res.get('resolution')} All verification checks passed and your issue is resolved."
+        )
+    else:
+        reply = (
+            f"I checked your issue and determined that **{ticket_res.get('escalation_reason')}**.\n"
+            f"I have safely created ticket **#{ticket_num}** and escalated it to our Senior IT Support team with full diagnostic telemetry."
+        )
+
+    return SupportResponse(
+        ticket_id=ticket.id,
+        ticket_number=ticket_num,
+        status=final_status,
+        category=ticket_res.get("category"),
+        priority=ticket_res.get("priority"),
+        reply=reply,
+        events=events,
+        created_at=ticket.created_at
+    )
+
+
 @app.get("/api/tickets", response_model=list[TicketListItem])
 def list_tickets(db: Session = Depends(get_db)):
-    return db.query(Ticket).order_by(Ticket.id.desc()).limit(50).all()
+    tickets = db.query(Ticket).order_by(Ticket.id.desc()).limit(50).all()
+    return [
+        TicketListItem(
+            id=t.id,
+            ticket_number=f"INC-{t.id:03d}",
+            issue=t.issue,
+            status="Resolved" if t.status in ["RESOLUTION_READY", "RESOLVED_BY_HUMAN"] else ("Escalated" if t.status in ["ESCALATE_TO_HUMAN", "DISPATCHED_TO_TIER2"] else "In Progress"),
+            category=t.category,
+            priority=t.priority,
+            confidence=t.confidence,
+            created_at=t.created_at
+        )
+        for t in tickets
+    ]
+
 
 
 @app.get("/api/system-status")

@@ -1,72 +1,75 @@
 import { useEffect, useState, useRef } from "react";
-import { getTickets, getTicket, investigate, performAction, getKnowledgeBase, getSystemStatus, sendVoiceChatMessage } from "./api";
+import { getTickets, getKnowledgeBase, getSystemStatus, sendSupportRequest } from "./api";
 
-const PRESETS = [
-  { label: "🔒 VPN Connection Stalled", issue: "My VPN is not connecting and corporate gateway keeps timing out.", category: "vpn" },
-  { label: "📶 Wi-Fi / DHCP Lease Lost", issue: "My laptop cannot connect to Wi-Fi and has no valid IP address.", category: "network" },
-  { label: "🔑 Account Locked (AD)", issue: "I forgot my password and my corporate account is locked after failed attempts.", category: "authentication" },
-  { label: "🖨️ Printer Spooler Blocked", issue: "The office printer is jamming and print spooler is offline.", category: "device" },
-  { label: "🚨 Critical Outage (Safety)", issue: "The production server is down and customer transactions are failing.", category: "general" }
+const QUICK_CATEGORIES = [
+  {
+    id: "troubleshoot",
+    icon: "🔧",
+    label: "Troubleshoot",
+    sample: "My laptop is slow",
+    fullPrompt: "My laptop is running very slow and applications are freezing."
+  },
+  {
+    id: "account",
+    icon: "👤",
+    label: "Account Help",
+    sample: "Can't access email",
+    fullPrompt: "I can't access my email and my corporate account seems locked."
+  },
+  {
+    id: "software",
+    icon: "🪟",
+    label: "Software",
+    sample: "Install software",
+    fullPrompt: "I need help installing and updating required corporate software."
+  },
+  {
+    id: "network",
+    icon: "📶",
+    label: "Network",
+    sample: "VPN not working",
+    fullPrompt: "My VPN is not connecting and corporate gateway keeps timing out."
+  }
 ];
 
-const EMPLOYEES = [
-  { name: "Jane Doe", email: "jane.doe@fixora.local", dept: "Engineering", avatar: "👩‍💻" },
-  { name: "Alex Rivera", email: "alex.rivera@fixora.local", dept: "Marketing & Growth", avatar: "👨‍🎨" },
-  { name: "Sarah Connor", email: "sarah.connor@fixora.local", dept: "Security & Ops", avatar: "👩‍🚀" }
+const POPULAR_TOPICS = [
+  { icon: "✉️", title: "Email & Accounts", prompt: "I can't access my email and password reset is failing." },
+  { icon: "💻", title: "Laptop & Hardware", prompt: "My laptop is running very slow and freezing." },
+  { icon: "📥", title: "Software Installation", prompt: "I need assistance installing corporate developer tools." },
+  { icon: "📶", title: "Network & VPN", prompt: "My VPN is not connecting to the corporate gateway." },
+  { icon: "🛡️", title: "Security Issues", prompt: "My account is locked out after repeated MFA prompts." },
+  { icon: "❓", title: "General Help", prompt: "The office printer is jamming and print spooler is offline." }
 ];
-
-const AGENT_META = {
-  "Ticket Triage Agent": { icon: "🧭", desc: "Extracts intent, category, and business impact priority." },
-  "Knowledge / RAG Agent": { icon: "📚", desc: "Retrieves grounded IT runbooks & past ticket precedents." },
-  "System Diagnosis Agent": { icon: "🔬", desc: "Probes live system status and establishes root cause." },
-  "Troubleshooting Agent": { icon: "📋", desc: "Dynamically selects non-destructive tools based on issue signals." },
-  "Resolution Agent": { icon: "⚙️", desc: "Safely executes approved simulated IT remediation tools." },
-  "Verification Agent": { icon: "🧪", desc: "Validates tool outputs against service recovery criteria." },
-  "Escalation Agent": { icon: "🛡️", desc: "Enforces autonomous safety boundaries and human operator routing." },
-  "Human Operator Supervision": { icon: "👨‍💻", desc: "Operator in the loop supervisor action recorded in audit trail." }
-};
 
 export default function App() {
-  const [selectedEmployee, setSelectedEmployee] = useState(EMPLOYEES[0]);
-  const [activeView, setActiveView] = useState("chat"); // 'chat' | 'telemetry' | 'kb'
-  
-  // Chat & Voice state
+  const [activeNav, setActiveNav] = useState("ask"); // 'ask' | 'tickets' | 'kb' | 'status' | 'settings'
   const [messages, setMessages] = useState([
     {
-      id: "welcome-1",
+      id: "init-1",
       sender: "ai",
-      text: "Hello! I am Fixora AI, your autonomous IT helpdesk assistant. You can type your tech problem below or tap 'Start AI Audio Call' to speak with me directly. How can I assist your setup today?",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      text: "Hello! I'm Fixora AI.\nHow can I help you today?",
+      time: "10:24 AM"
     }
   ]);
-  const [inputText, setInputText] = useState("");
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeTicket, setActiveTicket] = useState(null);
+  const [isListening, setIsListening] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [kbArticles, setKbArticles] = useState([]);
-  const [systemHealth, setSystemHealth] = useState(null);
-  const [error, setError] = useState("");
-
-  // Live Audio Call State
-  const [isCallActive, setIsCallActive] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [callTranscript, setCallTranscript] = useState("");
-  const [callDuration, setCallDuration] = useState(0);
-  const [operatorNote, setOperatorNote] = useState("");
-  const [actionLoading, setActionLoading] = useState(false);
-  const [expandedAgent, setExpandedAgent] = useState(null);
+  const [systemStatus, setSystemStatus] = useState("All Systems Operational");
+  const [statusOnline, setStatusOnline] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
-  const callTimerRef = useRef(null);
+  const inputRef = useRef(null);
 
-  // Auto-scroll chat
+  // Auto scroll to latest message
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Load Initial Data
+  // Load initial backend data
   async function loadData() {
     try {
       const [ticketList, kb, health] = await Promise.all([
@@ -76,13 +79,12 @@ export default function App() {
       ]);
       setTickets(ticketList);
       setKbArticles(kb);
-      setSystemHealth(health);
-      if (ticketList.length > 0 && !activeTicket) {
-        const latest = await getTicket(ticketList[0].id).catch(() => null);
-        if (latest) setActiveTicket(latest);
+      if (health) {
+        setSystemStatus(health.overall_status === "OPERATIONAL" ? "All Systems Operational" : "System Diagnostics Nominal");
+        setStatusOnline(true);
       }
     } catch {
-      // Backend starting
+      setStatusOnline(false);
     }
   }
 
@@ -90,65 +92,82 @@ export default function App() {
     loadData();
   }, []);
 
-  // Text-to-Speech function
-  function speakText(text) {
+  // Text-To-Speech
+  function speak(text) {
     if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.05;
-    utterance.pitch = 1.0;
-    
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.cancel();
+      const clean = text.replace(/[*#_`]/g, "");
+      const utterance = new SpeechSynthesisUtterance(clean);
+      utterance.rate = 1.05;
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // Audio optional
+    }
   }
 
-  // Handle Send Text Message
-  async function handleSendMessage(msgToSend) {
-    const text = (msgToSend || inputText).trim();
-    if (!text) return;
+  // Handle Support Submission (Text or Voice)
+  async function handleSubmit(customMsg, source = "text") {
+    const textToSend = (customMsg || input).trim();
+    if (!textToSend || loading) return;
 
-    const userMsg = {
+    const currentTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    // Add User Message to Chat
+    const userMessage = {
       id: `user-${Date.now()}`,
       sender: "user",
-      text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      text: textToSend,
+      time: currentTime,
+      source
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setInputText("");
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
     setLoading(true);
-    setError("");
+    setErrorMsg("");
 
     try {
-      const res = await sendVoiceChatMessage(text, selectedEmployee.name, selectedEmployee.email, false, activeTicket?.ticket_id);
-      
-      const aiMsg = {
+      // Call POST /api/support
+      const response = await sendSupportRequest(textToSend, source, "Sarah Connor", "sarah.connor@fixora.local");
+
+      // Add AI Response with Agentic Trace to Chat
+      const aiMessage = {
         id: `ai-${Date.now()}`,
         sender: "ai",
-        text: res.reply,
-        ticket: res.ticket,
-        actionType: res.action_type,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        text: response.reply || "I have investigated your technical issue.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        ticketNumber: response.ticket_number,
+        status: response.status,
+        category: response.category,
+        priority: response.priority,
+        events: response.events || [],
+        source
       };
 
-      setMessages((prev) => [...prev, aiMsg]);
-      if (res.ticket) {
-        setActiveTicket(res.ticket);
-        const updatedTickets = await getTickets().catch(() => []);
+      setMessages((prev) => [...prev, aiMessage]);
+
+      // Speak response if voice was used
+      if (source === "voice" && response.reply) {
+        speak(response.reply);
+      }
+
+      // Refresh recent tickets
+      const updatedTickets = await getTickets().catch(() => []);
+      if (updatedTickets.length > 0) {
         setTickets(updatedTickets);
       }
     } catch (err) {
-      setError(err.message);
+      setErrorMsg(err.message);
       setMessages((prev) => [
         ...prev,
         {
           id: `err-${Date.now()}`,
           sender: "ai",
-          text: `⚠️ I encountered a connection issue: ${err.message}. Please check if the local server is running.`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          text: "I couldn't reach the Fixora service desk. Please make sure the backend is running and try again.",
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          isError: true
         }
       ]);
     } finally {
@@ -156,585 +175,419 @@ export default function App() {
     }
   }
 
-  // Handle Live Audio Call Start/Stop
-  function startAudioCall() {
-    setIsCallActive(true);
-    setCallDuration(0);
-    setCallTranscript("Connecting to Fixora Voice Agent...");
-
-    // Timer
-    callTimerRef.current = setInterval(() => {
-      setCallDuration((d) => d + 1);
-    }, 1000);
-
-    // Initial greeting
-    const welcomeSpeech = `Hello ${selectedEmployee.name.split(" ")[0]}! I'm on the line. What IT problem are you facing right now?`;
-    speakText(welcomeSpeech);
-    setCallTranscript(welcomeSpeech);
-
-    // Setup Speech Recognition
+  // Microphone / Voice Support
+  function toggleMicrophone() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser. Please type your message.");
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    try {
       const recognition = new SpeechRecognition();
-      recognition.continuous = true;
+      recognition.continuous = false;
       recognition.interimResults = false;
       recognition.lang = "en-US";
 
-      recognition.onresult = async (event) => {
-        const lastResult = event.results[event.results.length - 1];
-        if (lastResult.isFinal) {
-          const spoken = lastResult[0].transcript.trim();
-          if (spoken.length > 2) {
-            setCallTranscript(`You: "${spoken}"`);
-            await processVoiceCallInput(spoken);
-          }
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        const spoken = event.results[0][0].transcript.trim();
+        setIsListening(false);
+        if (spoken) {
+          setInput(spoken);
+          handleSubmit(spoken, "voice");
         }
       };
 
-      recognition.onerror = (e) => {
-        console.warn("Speech recognition notice:", e.error);
+      recognition.onerror = () => {
+        setIsListening(false);
       };
 
-      try {
-        recognition.start();
-        recognitionRef.current = recognition;
-      } catch (err) {
-        console.warn("Speech recognition start failed:", err);
-      }
-    } else {
-      setCallTranscript("Voice synthesis active. Type or use preset chips to simulate speech.");
-    }
-  }
+      recognition.onend = () => {
+        setIsListening(false);
+      };
 
-  async function processVoiceCallInput(spokenText) {
-    setIsSpeaking(true);
-    setCallTranscript(`Analyzing your issue: "${spokenText}"...`);
-
-    try {
-      const res = await sendVoiceChatMessage(spokenText, selectedEmployee.name, selectedEmployee.email, true, activeTicket?.ticket_id);
-      
-      const replySpeech = res.spoken_audio_text || res.reply;
-      setCallTranscript(replySpeech);
-      speakText(replySpeech);
-
-      if (res.ticket) {
-        setActiveTicket(res.ticket);
-        const updatedList = await getTickets().catch(() => []);
-        setTickets(updatedList);
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        { id: `u-${Date.now()}`, sender: "user", text: spokenText, isVoice: true, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-        { id: `a-${Date.now()}`, sender: "ai", text: res.reply, ticket: res.ticket, isVoice: true, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
-      ]);
+      recognitionRef.current = recognition;
+      recognition.start();
     } catch (err) {
-      const errMsg = "I had trouble processing that request. Please try again or switch to text chat.";
-      setCallTranscript(errMsg);
-      speakText(errMsg);
+      console.warn("Speech error:", err);
+      setIsListening(false);
     }
   }
 
-  function endAudioCall() {
-    setIsCallActive(false);
-    if (callTimerRef.current) clearInterval(callTimerRef.current);
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch {}
-    }
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    setIsSpeaking(false);
+  function handleQuickStart(category) {
+    handleSubmit(category.fullPrompt, "text");
   }
 
-  function formatCallTime(secs) {
-    const mins = Math.floor(secs / 60);
-    const remaining = secs % 60;
-    return `${mins.toString().padStart(2, '0')}:${remaining.toString().padStart(2, '0')}`;
+  function handlePopularTopic(topic) {
+    setInput(topic.prompt);
+    inputRef.current?.focus();
   }
 
-  async function handleOperatorAction(actionType) {
-    if (!activeTicket?.ticket_id) return;
-    setActionLoading(true);
-    try {
-      const updated = await performAction(activeTicket.ticket_id, actionType, operatorNote);
-      setActiveTicket(updated);
-      setOperatorNote("");
-      const updatedList = await getTickets().catch(() => []);
-      setTickets(updatedList);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setActionLoading(false);
-    }
+  function handleNewTicketClick() {
+    setActiveNav("ask");
+    setInput("");
+    inputRef.current?.focus();
   }
 
   return (
-    <div className="app-container">
-      {/* Topbar */}
-      <header className="desk-topbar">
-        <div className="topbar-brand">
-          <div className="brand-orb">⚡</div>
-          <div className="brand-names">
-            <span className="brand-main">FIXORA <span className="neon">AI</span></span>
-            <span className="brand-sub">Autonomous IT Service Desk & Voice Assistant</span>
+    <div className="fixora-app">
+      {/* 1. Top Header */}
+      <header className="fixora-header">
+        <div className="header-left">
+          <div className="header-logo">
+            <div className="logo-icon-wrap">
+              <span className="logo-robot-icon">🤖</span>
+            </div>
+            <div className="logo-text-group">
+              <span className="logo-title">Fixora AI</span>
+              <span className="logo-subtitle">IT Service Desk</span>
+            </div>
           </div>
         </div>
 
-        <div className="topbar-nav">
-          <button
-            className={`nav-tab-btn ${activeView === "chat" ? "active" : ""}`}
-            onClick={() => setActiveView("chat")}
-          >
-            💬 Support Hub
-          </button>
-          <button
-            className={`nav-tab-btn ${activeView === "telemetry" ? "active" : ""}`}
-            onClick={() => setActiveView("telemetry")}
-          >
-            🔬 Multi-Agent Telemetry ({activeTicket ? `#${activeTicket.ticket_id}` : "Idle"})
-          </button>
-          <button
-            className={`nav-tab-btn ${activeView === "kb" ? "active" : ""}`}
-            onClick={() => setActiveView("kb")}
-          >
-            📚 Runbooks ({kbArticles.length})
-          </button>
-        </div>
+        <div className="header-right">
+          <div className="system-status-indicator">
+            <span className={`status-dot ${statusOnline ? "green" : "amber"}`}></span>
+            <span className="status-text">{systemStatus}</span>
+          </div>
 
-        <div className="topbar-user-pill">
-          <span className="emp-avatar">{selectedEmployee.avatar}</span>
-          <select
-            className="emp-select"
-            value={selectedEmployee.email}
-            onChange={(e) => {
-              const emp = EMPLOYEES.find(x => x.email === e.target.value);
-              if (emp) setSelectedEmployee(emp);
-            }}
-          >
-            {EMPLOYEES.map(e => (
-              <option key={e.email} value={e.email}>{e.name} ({e.dept})</option>
-            ))}
-          </select>
+          <button className="header-icon-btn" title="Light Mode" type="button">
+            ☀️
+          </button>
+          <button className="header-icon-btn" title="Settings" type="button" onClick={() => setActiveNav("settings")}>
+            ⚙️
+          </button>
+
+          <div className="user-profile-badge">
+            <div className="user-avatar-circle">SK</div>
+            <span className="user-chevron">▾</span>
+          </div>
         </div>
       </header>
 
-      {/* Main Support Interface */}
-      <main className="desk-main">
-        {activeView === "chat" && (
-          <div className="chat-layout">
-            {/* Left Sidebar: Quick Presets & Self Service */}
-            <aside className="chat-sidebar">
-              {/* Audio Call Action Card */}
-              <div className="voice-call-cta-card">
-                <div className="cta-icon-glow">🎙️</div>
-                <div className="cta-title">Live Voice Call with AI</div>
-                <p className="cta-desc">Speak naturally to Fixora AI. It diagnoses your issue, runs automated recovery, and speaks back.</p>
+      {/* 2. Three-Column Workspace Layout */}
+      <div className="fixora-body-layout">
+        {/* Left Navigation Sidebar */}
+        <aside className="left-sidebar">
+          <nav className="nav-menu">
+            <button
+              className={`nav-btn ${activeNav === "ask" ? "active" : ""}`}
+              onClick={() => setActiveNav("ask")}
+            >
+              <span className="nav-icon">💬</span>
+              <span className="nav-label">Ask Fixora</span>
+            </button>
+
+            <button
+              className={`nav-btn ${activeNav === "new-ticket" ? "active" : ""}`}
+              onClick={handleNewTicketClick}
+            >
+              <span className="nav-icon">➕</span>
+              <span className="nav-label">New Ticket</span>
+            </button>
+
+            <button
+              className={`nav-btn ${activeNav === "tickets" ? "active" : ""}`}
+              onClick={() => setActiveNav("tickets")}
+            >
+              <span className="nav-icon">📑</span>
+              <span className="nav-label">My Tickets</span>
+              {tickets.length > 0 && <span className="nav-counter">{tickets.length}</span>}
+            </button>
+
+            <button
+              className={`nav-btn ${activeNav === "kb" ? "active" : ""}`}
+              onClick={() => setActiveNav("kb")}
+            >
+              <span className="nav-icon">📖</span>
+              <span className="nav-label">Knowledge Base</span>
+            </button>
+
+            <button
+              className={`nav-btn ${activeNav === "status" ? "active" : ""}`}
+              onClick={() => setActiveNav("status")}
+            >
+              <span className="nav-icon">🛡️</span>
+              <span className="nav-label">System Status</span>
+            </button>
+          </nav>
+
+          <div className="left-bottom-section">
+            <button
+              className={`nav-btn settings-btn ${activeNav === "settings" ? "active" : ""}`}
+              onClick={() => setActiveNav("settings")}
+            >
+              <span className="nav-icon">⚙️</span>
+              <span className="nav-label">Settings</span>
+            </button>
+
+            {/* AI-Powered Support Banner Card */}
+            <div className="support-badge-card">
+              <div className="support-card-icon">💻</div>
+              <div className="support-card-title">AI-Powered IT Support</div>
+              <div className="support-card-desc">
+                Get instant help or create a ticket for your issue.
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* Center Main AI Chat Panel */}
+        <main className="main-chat-container">
+          <div className="chat-content-scroll">
+            {/* Hero AI Greeting Header */}
+            <div className="ai-hero-header">
+              <div className="hero-avatar-ring">
+                <span className="hero-robot">🤖</span>
+              </div>
+              <h1 className="hero-title">Hi! I'm Fixora AI</h1>
+              <h2 className="hero-subtitle">Your IT Service Desk Assistant</h2>
+              <p className="hero-instruction">
+                Describe your issue in your own words, or use voice to talk with me.
+              </p>
+            </div>
+
+            {/* 4 Quick Issue Category Cards */}
+            <div className="quick-categories-grid">
+              {QUICK_CATEGORIES.map((cat) => (
                 <button
-                  className={`btn-voice-call ${isCallActive ? "active-call" : ""}`}
-                  onClick={isCallActive ? endAudioCall : startAudioCall}
+                  key={cat.id}
+                  className="category-card"
+                  onClick={() => handleQuickStart(cat)}
+                  disabled={loading}
                 >
-                  {isCallActive ? "🔴 End Call (" + formatCallTime(callDuration) + ")" : "📞 Start AI Audio Call"}
+                  <span className="category-icon">{cat.icon}</span>
+                  <span className="category-title">{cat.label}</span>
+                  <span className="category-sample">"{cat.sample}"</span>
                 </button>
-              </div>
+              ))}
+            </div>
 
-              {/* Quick Problem Presets */}
-              <div className="sidebar-section">
-                <div className="section-label">⚡ 1-Click Problem Simulations</div>
-                <div className="chips-column">
-                  {PRESETS.map((p) => (
-                    <button
-                      key={p.label}
-                      className="sidebar-chip"
-                      onClick={() => handleSendMessage(p.issue)}
-                    >
-                      <span>{p.label}</span>
-                      <span className="chip-arrow">→</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* System Health Status */}
-              <div className="sidebar-section health-section">
-                <div className="section-label">📡 System Diagnostics Status</div>
-                <div className="health-badge-list">
-                  <div className="health-row"><span className="dot online"></span> VPN Gateway (18ms)</div>
-                  <div className="health-row"><span className="dot online"></span> Azure AD / LDAP Sync</div>
-                  <div className="health-row"><span className="dot online"></span> DHCP/DNS (1.1.1.1)</div>
-                  <div className="health-row"><span className="dot degraded"></span> Print Spooler (Healed)</div>
-                </div>
-              </div>
-            </aside>
-
-            {/* Center / Right: Interactive Chat & Resolution Stream */}
-            <section className="chat-viewport">
-              <div className="chat-header-bar">
-                <div className="agent-online-status">
-                  <span className="pulse-circle"></span>
-                  <div>
-                    <div className="agent-name">Fixora Autonomous Resolution Desk</div>
-                    <div className="agent-sub">Powered by 7 Multi-Agent Reasoning Pipelines</div>
-                  </div>
-                </div>
-
-                {activeTicket && (
-                  <div className="ticket-active-badge">
-                    <span className="t-badge-id">Ticket #{activeTicket.ticket_id}</span>
-                    <span className={`t-badge-status ${activeTicket.status === "RESOLUTION_READY" ? "resolved" : "escalated"}`}>
-                      {activeTicket.status.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Messages Scroll Area */}
-              <div className="chat-messages-area">
-                {messages.map((m) => (
-                  <div key={m.id} className={`chat-bubble-row ${m.sender}`}>
-                    <div className="bubble-avatar">
-                      {m.sender === "ai" ? "⚡" : selectedEmployee.avatar}
+            {/* Conversation Feed */}
+            <div className="conversation-feed">
+              {messages.map((m) => (
+                <div key={m.id} className={`message-row ${m.sender}`}>
+                  {m.sender === "ai" && (
+                    <div className="msg-avatar ai-avatar">
+                      🤖
                     </div>
-                    <div className="bubble-content-wrapper">
-                      <div className="bubble-meta">
-                        <span className="sender-name">{m.sender === "ai" ? "Fixora AI Desk" : selectedEmployee.name}</span>
-                        <span className="msg-time">{m.timestamp}</span>
-                        {m.isVoice && <span className="voice-tag">🎙️ Voice Call</span>}
-                      </div>
+                  )}
 
-                      <div className="bubble-text">
-                        {m.text.split('\n').map((paragraph, i) => (
-                          <p key={i}>{paragraph}</p>
+                  <div className="message-bubble-column">
+                    <div className={`message-bubble ${m.sender} ${m.isError ? "error-bubble" : ""}`}>
+                      <div className="bubble-text-content">
+                        {m.text.split("\n").map((line, idx) => (
+                          <p key={idx}>{line}</p>
                         ))}
                       </div>
 
-                      {/* If message resulted in ticket resolution / execution */}
-                      {m.ticket && (
-                        <div className="embedded-ticket-card">
-                          <div className="etc-header">
-                            <span className="etc-title">⚙️ Autonomous Multi-Agent Action Summary</span>
-                            <span className="etc-confidence">{Math.round((m.ticket.confidence || 0.9) * 100)}% Verified</span>
-                          </div>
-
-                          <div className="etc-body">
-                            <div className="etc-item">
-                              <span className="etc-label">Diagnosis:</span>
-                              <span className="etc-val">{m.ticket.diagnosis}</span>
-                            </div>
-                            <div className="etc-item">
-                              <span className="etc-label">Resolution Applied:</span>
-                              <span className="etc-val">{m.ticket.resolution}</span>
-                            </div>
-                            {m.ticket.dynamic_tools && (
-                              <div className="etc-tools-row">
-                                <span className="etc-label">Dynamic Tool:</span>
-                                {m.ticket.dynamic_tools.map((dt, idx) => (
-                                  <span key={idx} className={`tool-pill ${dt.decision === "SELECTED" ? "selected" : "skipped"}`}>
-                                    {dt.tool} ({dt.decision})
-                                  </span>
-                                ))}
-                              </div>
+                      {/* Agentic Resolution Trace Card */}
+                      {m.events && m.events.length > 0 && (
+                        <div className="agentic-trace-card">
+                          <div className="trace-header">
+                            <span className="trace-title">Agentic resolution trace</span>
+                            {m.ticketNumber && (
+                              <span className="trace-ticket-tag">{m.ticketNumber}</span>
                             )}
                           </div>
 
-                          <div className="etc-footer">
-                            <button
-                              className="btn-inspect-telemetry"
-                              onClick={() => setActiveView("telemetry")}
-                            >
-                              🔍 View 7-Agent Execution Trace →
-                            </button>
+                          <div className="trace-checklist">
+                            {m.events.map((evt, idx) => (
+                              <div key={idx} className="trace-step-row">
+                                <div className="trace-icon-col">
+                                  {evt.status === "completed" ? (
+                                    <span className="step-check green">✓</span>
+                                  ) : evt.status === "failed" ? (
+                                    <span className="step-check amber">⚠</span>
+                                  ) : (
+                                    <span className="step-check blue">●</span>
+                                  )}
+                                </div>
+                                <div className="trace-text-col">
+                                  <span className="step-name">{evt.name}</span>
+                                  <span className="step-detail">{evt.detail}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="trace-footer">
+                            <div className="trace-meta">
+                              {m.category && <span className="meta-pill">{m.category.toUpperCase()}</span>}
+                              {m.priority && <span className="meta-pill">{m.priority.toUpperCase()} PRIORITY</span>}
+                            </div>
+                            <span className={`status-badge ${m.status === "resolved" ? "resolved" : "escalated"}`}>
+                              {m.status === "resolved" ? "✓ Verified Clean" : "⚠ Escalated to IT Support"}
+                            </span>
                           </div>
                         </div>
                       )}
                     </div>
-                  </div>
-                ))}
 
-                {loading && (
-                  <div className="chat-bubble-row ai">
-                    <div className="bubble-avatar">⚡</div>
-                    <div className="bubble-content-wrapper">
-                      <div className="thinking-bubble">
-                        <span className="pulse-dot-ai"></span>
-                        <span>Investigating knowledge runbooks, probing system status & selecting dynamic tools...</span>
-                      </div>
+                    <div className="message-timestamp">{m.time}</div>
+                  </div>
+
+                  {m.sender === "user" && (
+                    <div className="msg-avatar user-avatar">
+                      👤
                     </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              {/* Chat Input Bar */}
-              <div className="chat-input-container">
-                <div className="input-box-wrapper">
-                  <textarea
-                    className="chat-textarea"
-                    rows="2"
-                    placeholder="Type your tech trouble, error message, or hardware issue... (or click voice call on left)"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                  />
-
-                  <div className="input-actions-bar">
-                    <button
-                      type="button"
-                      className="btn-mic-quick"
-                      title="Simulate Voice Input"
-                      onClick={() => handleSendMessage(PRESETS[0].issue)}
-                    >
-                      🎙️
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-send"
-                      disabled={loading || !inputText.trim()}
-                      onClick={() => handleSendMessage()}
-                    >
-                      {loading ? "Solving..." : "⚡ Send to AI"}
-                    </button>
-                  </div>
+                  )}
                 </div>
-              </div>
-            </section>
-          </div>
-        )}
+              ))}
 
-        {/* View 2: Multi-Agent Telemetry & Operator Supervision */}
-        {activeView === "telemetry" && (
-          <div className="telemetry-layout">
-            <div className="telemetry-left">
-              <div className="telemetry-card">
-                <div className="card-top-header">
-                  <h2>7-Stage Multi-Agent Execution Graph</h2>
-                  <span className="tag-pills">Ticket #{activeTicket?.ticket_id || "None"}</span>
-                </div>
-                <p className="card-description">
-                  Sequential audit trace across all 7 specialized agents persisted in PostgreSQL.
-                </p>
-
-                {activeTicket?.workflow ? (
-                  <div className="workflow-stages-list">
-                    {activeTicket.workflow.map((item, index) => {
-                      const meta = AGENT_META[item.agent] || { icon: "⚡", desc: "Agent Step" };
-                      const isExpanded = expandedAgent === index;
-                      return (
-                        <div key={index} className="wf-stage-card">
-                          <div className="wf-card-header" onClick={() => setExpandedAgent(isExpanded ? null : index)}>
-                            <div className="wf-title-group">
-                              <span className="wf-icon">{meta.icon}</span>
-                              <div>
-                                <div className="wf-step-num">STAGE 0{index + 1}</div>
-                                <div className="wf-agent-name">{item.agent}</div>
-                              </div>
-                            </div>
-                            <span className="badge-done">COMPLETED</span>
-                          </div>
-
-                          <div className="wf-summary-snippet">
-                            {item.agent === "Ticket Triage Agent" && (
-                              <div>Category: <strong>{item.output.category}</strong> · Priority: <strong>{item.output.priority}</strong></div>
-                            )}
-                            {item.agent === "Knowledge / RAG Agent" && (
-                              <div>Matched <strong>{item.output.matches?.length || 0} Grounded Runbooks</strong> & Correlated <strong>{item.output.previous_tickets_investigated?.length || 0} Past Tickets</strong></div>
-                            )}
-                            {item.agent === "System Diagnosis Agent" && (
-                              <div>Diagnosis: <strong>{item.output.diagnosis}</strong></div>
-                            )}
-                            {item.agent === "Troubleshooting Agent" && (
-                              <div>Dynamic Rationale: <em>{item.output.dynamic_selection_reason || "Runbook tools"}</em></div>
-                            )}
-                            {item.agent === "Resolution Agent" && (
-                              <div>Tools Executed: {item.output.actions?.map(a => <code key={a.name} className="code-tag">{a.name} ({a.result?.status})</code>)}</div>
-                            )}
-                            {item.agent === "Verification Agent" && (
-                              <div>{item.output.verified ? "✓ Verified Clean" : "✕ Escalation Advised"}: {item.output.message}</div>
-                            )}
-                            {item.agent === "Escalation Agent" && (
-                              <div>Status: <strong>{item.output.status}</strong> · Confidence: {Math.round((item.output.confidence || 0) * 100)}%</div>
-                            )}
-                          </div>
-
-                          <button
-                            className="btn-expand-json"
-                            onClick={() => setExpandedAgent(isExpanded ? null : index)}
-                          >
-                            {isExpanded ? "▲ Hide Payload" : "▼ Inspect JSON Payload"}
-                          </button>
-
-                          {isExpanded && (
-                            <pre className="json-box">{JSON.stringify(item.output, null, 2)}</pre>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="empty-notice">No ticket telemetry selected. Send a message in Support Hub first.</div>
-                )}
-              </div>
-            </div>
-
-            <div className="telemetry-right">
-              {/* Operator Supervision */}
-              <div className="telemetry-card operator-box">
-                <h3>👨‍💻 Human Operator Supervision</h3>
-                <p className="card-sub">Authorize manual overrides or tier-2 queue dispatch.</p>
-
-                <input
-                  type="text"
-                  className="op-input"
-                  placeholder="Supervisor note..."
-                  value={operatorNote}
-                  onChange={(e) => setOperatorNote(e.target.value)}
-                />
-
-                <div className="op-buttons-grid">
-                  <button
-                    className="btn-op dispatch"
-                    onClick={() => handleOperatorAction("DISPATCH_TIER2")}
-                    disabled={actionLoading || !activeTicket}
-                  >
-                    🚨 Dispatch Tier-2
-                  </button>
-                  <button
-                    className="btn-op approve"
-                    onClick={() => handleOperatorAction("APPROVE_AUTO_FIX")}
-                    disabled={actionLoading || !activeTicket}
-                  >
-                    ✓ Override & Fix
-                  </button>
-                  <button
-                    className="btn-op resolve"
-                    onClick={() => handleOperatorAction("RESOLVE_MANUAL")}
-                    disabled={actionLoading || !activeTicket}
-                  >
-                    🛡️ Mark Resolved
-                  </button>
-                </div>
-              </div>
-
-              {/* Previous Tickets Correlated */}
-              {activeTicket?.previous_tickets && activeTicket.previous_tickets.length > 0 && (
-                <div className="telemetry-card">
-                  <h3>🔍 Previous Similar Tickets</h3>
-                  <div className="prev-tickets-col">
-                    {activeTicket.previous_tickets.map((pt) => (
-                      <div key={pt.ticket_id} className="pt-card">
-                        <div className="pt-top">
-                          <span>Ticket #{pt.ticket_id}</span>
-                          <span className="pt-badge">{pt.status}</span>
-                        </div>
-                        <div className="pt-text">{pt.issue}</div>
-                        <div className="pt-res">{pt.resolution}</div>
+              {loading && (
+                <div className="message-row ai">
+                  <div className="msg-avatar ai-avatar">🤖</div>
+                  <div className="message-bubble-column">
+                    <div className="message-bubble ai loading-bubble">
+                      <div className="loading-dots">
+                        <span></span><span></span><span></span>
                       </div>
-                    ))}
+                      <span className="loading-text">Fixora is investigating your issue with autonomous runbooks...</span>
+                    </div>
                   </div>
                 </div>
               )}
+
+              <div ref={chatEndRef} />
             </div>
           </div>
-        )}
 
-        {/* View 3: Knowledge Base Runbooks */}
-        {activeView === "kb" && (
-          <div className="kb-view-layout">
-            <h2>📚 Enterprise IT Knowledge Base Runbooks</h2>
-            <div className="kb-cards-grid">
-              {kbArticles.map((article) => (
-                <div key={article.code} className="kb-runbook-card">
-                  <div className="kb-top-row">
-                    <span className="kb-code-pill">{article.code}</span>
-                    <span className="kb-cat-pill">{article.category.toUpperCase()}</span>
+          {/* Fixed Message Composer at Bottom */}
+          <div className="composer-dock">
+            <div className="composer-input-card">
+              <button className="composer-btn clip-btn" title="Attach screenshot (coming soon)" type="button">
+                📎
+              </button>
+
+              <input
+                ref={inputRef}
+                type="text"
+                className="composer-text-input"
+                placeholder={isListening ? "Listening... speak your issue now..." : "Type your message here..."}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(input, "text");
+                  }
+                }}
+                disabled={loading}
+              />
+
+              <button
+                className={`composer-btn mic-btn ${isListening ? "listening" : ""}`}
+                title="Click to speak your problem"
+                type="button"
+                onClick={toggleMicrophone}
+              >
+                {isListening ? "🔴" : "🎤"}
+              </button>
+
+              <button
+                className="composer-send-btn"
+                title="Send Message"
+                type="button"
+                onClick={() => handleSubmit(input, "text")}
+                disabled={loading || !input.trim()}
+              >
+                ➤
+              </button>
+            </div>
+
+            <div className="composer-helper-caption">
+              You can type your issue, use the microphone to speak, or attach a screenshot.
+            </div>
+          </div>
+        </main>
+
+        {/* Right Sidebar */}
+        <aside className="right-sidebar">
+          {/* Card 1: Create a Ticket */}
+          <div className="right-card create-ticket-card">
+            <h3 className="card-title">Create a Ticket</h3>
+            <p className="card-desc">Quickly create a ticket for your issue.</p>
+            <button className="btn-new-ticket" onClick={handleNewTicketClick}>
+              + New Ticket
+            </button>
+          </div>
+
+          {/* Card 2: Recent Tickets */}
+          <div className="right-card recent-tickets-card">
+            <div className="card-header-row">
+              <h3 className="card-title">Recent Tickets</h3>
+              <button className="link-btn" onClick={() => setActiveNav("tickets")}>
+                View All
+              </button>
+            </div>
+
+            <div className="tickets-list">
+              {tickets.length === 0 ? (
+                <div className="empty-tickets">No tickets recorded yet.</div>
+              ) : (
+                tickets.slice(0, 4).map((t) => {
+                  const statusClass = t.status?.toLowerCase().includes("resolv")
+                    ? "resolved"
+                    : t.status?.toLowerCase().includes("escalat")
+                    ? "pending"
+                    : "in-progress";
+
+                  return (
+                    <div
+                      key={t.id}
+                      className="ticket-row"
+                      onClick={() => {
+                        setInput(`Investigate status of ticket ${t.ticket_number || '#' + t.id}`);
+                        inputRef.current?.focus();
+                      }}
+                    >
+                      <div className="ticket-top-line">
+                        <span className="ticket-num">{t.ticket_number || `#INC-${t.id.toString().padStart(3, '0')}`}</span>
+                        <span className={`ticket-pill ${statusClass}`}>{t.status}</span>
+                      </div>
+                      <div className="ticket-subject">{t.issue}</div>
+                      <div className="ticket-time">Recent</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Card 3: Popular Topics */}
+          <div className="right-card popular-topics-card">
+            <h3 className="card-title">Popular Topics</h3>
+            <div className="topics-list">
+              {POPULAR_TOPICS.map((topic, i) => (
+                <div
+                  key={i}
+                  className="topic-row"
+                  onClick={() => handlePopularTopic(topic)}
+                >
+                  <div className="topic-left">
+                    <span className="topic-icon">{topic.icon}</span>
+                    <span className="topic-name">{topic.title}</span>
                   </div>
-                  <h3>{article.title}</h3>
-                  <p>{article.content}</p>
-                  <div className="kb-steps-box">
-                    <strong>Standard Steps:</strong>
-                    <ol>
-                      {article.steps.map((s, idx) => (
-                        <li key={idx}>{s}</li>
-                      ))}
-                    </ol>
-                  </div>
-                  <button
-                    className="btn-test-runbook"
-                    onClick={() => {
-                      setActiveView("chat");
-                      handleSendMessage(`Troubleshoot ${article.title.toLowerCase()}`);
-                    }}
-                  >
-                    ⚡ Test Runbook in Chat
-                  </button>
+                  <span className="topic-chevron">›</span>
                 </div>
               ))}
             </div>
           </div>
-        )}
-      </main>
-
-      {/* Live Audio Call Modal Screen */}
-      {isCallActive && (
-        <div className="voice-call-overlay">
-          <div className="voice-call-modal">
-            <div className="call-header">
-              <div className="calling-tag">LIVE AI AUDIO CALL</div>
-              <div className="call-timer">{formatCallTime(callDuration)}</div>
-            </div>
-
-            {/* Glowing Voice Orb */}
-            <div className="voice-orb-container">
-              <div className={`voice-orb ${isSpeaking ? "speaking" : "listening"}`}>
-                <div className="orb-inner">⚡</div>
-                <div className="orb-ring ring-1"></div>
-                <div className="orb-ring ring-2"></div>
-                <div className="orb-ring ring-3"></div>
-              </div>
-            </div>
-
-            <div className="voice-status-text">
-              {isSpeaking ? "Fixora AI is speaking..." : "Listening to your microphone..."}
-            </div>
-
-            {/* Live Transcript Box */}
-            <div className="live-transcript-box">
-              <div className="transcript-label">Live Call Audio Transcript:</div>
-              <p className="transcript-body">{callTranscript}</p>
-            </div>
-
-            {/* Quick voice simulation chips */}
-            <div className="voice-quick-chips">
-              <span>Speak a scenario:</span>
-              <button onClick={() => processVoiceCallInput("My VPN is offline and timing out.")}>🔒 VPN Stalled</button>
-              <button onClick={() => processVoiceCallInput("Printer is jamming and spooler offline.")}>🖨️ Printer Jam</button>
-              <button onClick={() => processVoiceCallInput("My account is locked out.")}>🔑 Account Lock</button>
-            </div>
-
-            {/* Call Action Controls */}
-            <div className="call-controls-bar">
-              <button
-                className={`btn-call-ctrl ${isMuted ? "muted" : ""}`}
-                onClick={() => setIsMuted(!isMuted)}
-              >
-                {isMuted ? "🔇 Unmute" : "🎙️ Mute"}
-              </button>
-              <button className="btn-call-ctrl end-call-btn" onClick={endAudioCall}>
-                🔴 End Call
-              </button>
-              <button
-                className="btn-call-ctrl"
-                onClick={() => speakText(callTranscript)}
-              >
-                🔊 Replay Voice
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        </aside>
+      </div>
     </div>
   );
 }
