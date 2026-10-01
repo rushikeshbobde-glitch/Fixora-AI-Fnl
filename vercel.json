@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "buildCommand": "cd Fixora_AI/frontend && npm install && npm run build",
+  "outputDirectory": "Fixora_AI/frontend/dist",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
