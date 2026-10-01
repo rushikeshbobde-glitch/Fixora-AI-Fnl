@@ -1,6 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, JSON
 from sqlalchemy.orm import relationship
 from backend.db.database import Base
 
@@ -22,8 +21,8 @@ class KnowledgeArticle(Base):
     title = Column(String(200), nullable=False)
     category = Column(String(80), nullable=False)
     content = Column(Text, nullable=False)
-    steps = Column(JSONB, default=list)
-    tools = Column(JSONB, default=list)
+    steps = Column(JSON, default=list)
+    tools = Column(JSON, default=list)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -53,7 +52,7 @@ class AgentRun(Base):
     ticket_id = Column(Integer, ForeignKey("tickets.id", ondelete="CASCADE"))
     agent_name = Column(String(120), nullable=False)
     status = Column(String(30), nullable=False)
-    output = Column(JSONB, default=dict)
+    output = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
     ticket = relationship("Ticket", back_populates="runs")
 
@@ -74,8 +73,8 @@ class ToolAction(Base):
     id = Column(Integer, primary_key=True)
     ticket_id = Column(Integer, ForeignKey("tickets.id", ondelete="CASCADE"))
     tool_name = Column(String(120), nullable=False)
-    input = Column(JSONB, default=dict)
-    output = Column(JSONB, default=dict)
+    input = Column(JSON, default=dict)
+    output = Column(JSON, default=dict)
     status = Column(String(30), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     ticket = relationship("Ticket", back_populates="actions")
