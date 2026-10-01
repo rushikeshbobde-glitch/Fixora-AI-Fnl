@@ -41,7 +41,47 @@ const POPULAR_TOPICS = [
   { icon: "❓", title: "General Help", prompt: "The office printer is jamming and print spooler is offline." }
 ];
 
+function renderFormattedText(text) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  return lines.map((line, idx) => {
+    if (!line.trim()) {
+      return <div key={idx} style={{ height: "6px" }} />;
+    }
+    // Parse bold tags **text**
+    const parts = line.split(/(\*\*.*?\*\*)/g);
+    const renderedParts = parts.map((part, pIdx) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={pIdx}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+
+    if (line.startsWith("• ") || line.startsWith("- ")) {
+      return (
+        <div key={idx} className="bubble-bullet-line">
+          <span className="bullet-dot">•</span>
+          <span className="bullet-content">{renderedParts}</span>
+        </div>
+      );
+    }
+    if (/^\d+\.\s/.test(line)) {
+      const numMatch = line.match(/^(\d+)\.\s(.*)$/);
+      if (numMatch) {
+        return (
+          <div key={idx} className="bubble-num-line">
+            <span className="num-badge">{numMatch[1]}.</span>
+            <span className="num-content">{numMatch[2]}</span>
+          </div>
+        );
+      }
+    }
+    return <p key={idx}>{renderedParts}</p>;
+  });
+}
+
 export default function App() {
+
   const [activeNav, setActiveNav] = useState("ask"); // 'ask' | 'tickets' | 'kb' | 'status' | 'settings'
   const [messages, setMessages] = useState([
     {
@@ -388,9 +428,7 @@ export default function App() {
                   <div className="message-bubble-column">
                     <div className={`message-bubble ${m.sender} ${m.isError ? "error-bubble" : ""}`}>
                       <div className="bubble-text-content">
-                        {m.text.split("\n").map((line, idx) => (
-                          <p key={idx}>{line}</p>
-                        ))}
+                        {renderFormattedText(m.text)}
                       </div>
 
                       {/* Agentic Resolution Trace Card */}

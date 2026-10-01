@@ -502,12 +502,50 @@ button, input, textarea {
   margin-bottom: 0;
 }
 
+.bubble-bullet-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 3px 0;
+}
+
+.bullet-dot {
+  color: var(--primary-blue);
+  font-weight: 800;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.bullet-content {
+  flex: 1;
+}
+
+.bubble-num-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.num-badge {
+  font-weight: 800;
+  color: var(--primary-blue);
+  font-size: 12px;
+  min-width: 18px;
+  line-height: 1.5;
+}
+
+.num-content {
+  flex: 1;
+}
+
 .message-timestamp {
   font-size: 10px;
   color: var(--text-muted);
   margin-top: 4px;
   padding: 0 4px;
 }
+
 
 /* Agentic Resolution Trace Card */
 .agentic-trace-card {
