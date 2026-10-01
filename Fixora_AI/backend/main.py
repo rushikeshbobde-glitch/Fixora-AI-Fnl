@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -16,7 +17,9 @@ from backend.schemas import (
     VoiceChatResponse,
     SupportRequest,
     SupportResponse,
-    SupportEvent
+    SupportEvent,
+    HumanAssignmentRequest,
+    HumanAssignmentResponse
 )
 from backend.services.ai_service import synthesize_voice_response, synthesize_humanized_solution
 from backend.agents.orchestrator import run_workflow
@@ -24,11 +27,24 @@ from backend.agents.orchestrator import run_workflow
 
 
 
+from sqlalchemy import text
 from contextlib import asynccontextmanager
 
 def init_db():
     try:
         Base.metadata.create_all(bind=engine)
+        # Safe column addition for existing databases
+        with engine.connect() as conn:
+            for col_sql in [
+                "ALTER TABLE tickets ADD COLUMN assigned_technician VARCHAR(120)",
+                "ALTER TABLE tickets ADD COLUMN assigned_at TIMESTAMP",
+                "ALTER TABLE tickets ADD COLUMN technician_notes TEXT"
+            ]:
+                try:
+                    conn.execute(text(col_sql))
+                    conn.commit()
+                except Exception:
+                    pass
         db = SessionLocal()
         try:
             seed_database(db)
@@ -414,6 +430,171 @@ def perform_operator_action(ticket_id: int, payload: OperatorActionPayload, db: 
 
 
 
+TECHNICIAN_ROSTER = {
+    "hardware": {
+        "name": "Marcus Vance",
+        "tier": "Senior Hardware & Workstation Engineer (Tier-2)",
+        "department": "Workstation Field Services",
+        "channel": "Direct Teams Chat / Desk Ext. 4091",
+        "eta": 4
+    },
+    "printer": {
+        "name": "Elena Rostova",
+        "tier": "Peripherals & Print Operations Specialist (Tier-2)",
+        "department": "Office IT & Fleet Operations",
+        "channel": "Floor-3 Pager #212 / Teams Chat",
+        "eta": 5
+    },
+    "vpn": {
+        "name": "Devon Reed",
+        "tier": "Senior Network Security Engineer (Tier-2)",
+        "department": "Infrastructure & NetOps",
+        "channel": "Slack #netops-priority / Ext. 4022",
+        "eta": 3
+    },
+    "network": {
+        "name": "Devon Reed",
+        "tier": "Senior Network Security Engineer (Tier-2)",
+        "department": "Infrastructure & NetOps",
+        "channel": "Slack #netops-priority / Ext. 4022",
+        "eta": 3
+    },
+    "authentication": {
+        "name": "Amina Diallo",
+        "tier": "Identity & Access Management Specialist (Tier-2)",
+        "department": "Identity & Security Operations",
+        "channel": "Priority IAM Bridge / Ext. 4015",
+        "eta": 2
+    },
+    "software": {
+        "name": "Liam O'Connor",
+        "tier": "Endpoint Systems & Software Delivery Engineer (Tier-2)",
+        "department": "Endpoint Engineering",
+        "channel": "Teams Chat / Ext. 4066",
+        "eta": 5
+    },
+    "device": {
+        "name": "Marcus Vance",
+        "tier": "Senior Hardware & Workstation Engineer (Tier-2)",
+        "department": "Workstation Field Services",
+        "channel": "Direct Teams Chat / Ext. 4091",
+        "eta": 4
+    },
+    "general": {
+        "name": "Sarah Jenkins",
+        "tier": "Lead Incident Operations Specialist (Tier-3)",
+        "department": "Enterprise IT Operations Center",
+        "channel": "Emergency Dispatch Bridge / Pager #991",
+        "eta": 5
+    }
+}
+
+
+@app.post("/api/tickets/{ticket_id}/assign-human", response_model=HumanAssignmentResponse)
+def assign_ticket_to_human(ticket_id: int, payload: HumanAssignmentRequest | None = None, db: Session = Depends(get_db)):
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    cat = (ticket.category or (payload.category if payload else "") or "general").lower()
+    tech_info = TECHNICIAN_ROSTER.get(cat, TECHNICIAN_ROSTER["general"])
+
+    ticket.status = "DISPATCHED_TO_TIER2"
+    ticket.assigned_technician = tech_info["name"]
+    ticket.assigned_at = datetime.utcnow()
+    reason = payload.reason if payload and payload.reason else "Employee requested immediate live specialist handover"
+    ticket.escalation_reason = f"Direct Human Handover: {reason} (Assigned to {tech_info['name']})"
+
+    db.add(AgentRun(
+        ticket_id=ticket.id,
+        agent_name="Human Specialist Handover Agent",
+        status="COMPLETED",
+        output={
+            "assigned_technician": tech_info["name"],
+            "tier": tech_info["tier"],
+            "department": tech_info["department"],
+            "channel": tech_info["channel"],
+            "eta_minutes": tech_info["eta"],
+            "reason": reason,
+            "dispatched_at": datetime.utcnow().isoformat()
+        }
+    ))
+    db.commit()
+    db.refresh(ticket)
+
+    ticket_num = f"INC-{ticket.id:03d}"
+    reply_msg = (
+        f"👨‍💻 **Direct Human Handover Confirmed!**\n\n"
+        f"I have bypassed further automated steps and directly assigned your ticket to **{tech_info['name']}**.\n\n"
+        f"**📋 Dispatch Telemetry:**\n"
+        f"• **Assigned Specialist**: {tech_info['name']} ({tech_info['tier']})\n"
+        f"• **Department**: {tech_info['department']}\n"
+        f"• **Direct Channel**: {tech_info['channel']}\n"
+        f"• **Estimated Response Time**: Under {tech_info['eta']} minutes\n"
+        f"• **Ticket Handoff**: **#{ticket_num}** with all diagnostic telemetry attached.\n\n"
+        f"{tech_info['name']} has received your incident ticket and will message or call your workstation directly. You don't need to do anything further!"
+    )
+
+    events = [
+        SupportEvent(stage="triage", name="Triage", status="completed", detail=f"Categorized as {ticket.category or 'general'} incident."),
+        SupportEvent(stage="escalation", name="Human IT Handover", status="completed", detail=f"Directly assigned to {tech_info['name']} ({tech_info['department']}). Response ETA < {tech_info['eta']}m.")
+    ]
+
+    return HumanAssignmentResponse(
+        ticket_id=ticket.id,
+        ticket_number=ticket_num,
+        status="escalated",
+        assigned_technician=tech_info["name"],
+        technician_tier=tech_info["tier"],
+        technician_department=tech_info["department"],
+        direct_channel=tech_info["channel"],
+        eta_minutes=tech_info["eta"],
+        reply=reply_msg,
+        events=events,
+        created_at=ticket.created_at
+    )
+
+
+@app.post("/api/support/escalate", response_model=HumanAssignmentResponse)
+def escalate_support_request(payload: HumanAssignmentRequest, db: Session = Depends(get_db)):
+    # Find ticket by id, ticket_number, or create a new urgent escalation ticket
+    ticket = None
+    if payload.ticket_id:
+        ticket = db.query(Ticket).filter(Ticket.id == payload.ticket_id).first()
+    elif payload.ticket_number:
+        try:
+            t_num = int(payload.ticket_number.replace("INC-", "").lstrip("0") or "0")
+            if t_num > 0:
+                ticket = db.query(Ticket).filter(Ticket.id == t_num).first()
+        except Exception:
+            pass
+
+    if not ticket:
+        # Create ticket for employee
+        employee = db.query(Employee).filter(Employee.email == payload.employee_email).first()
+        if not employee:
+            employee = Employee(name=payload.employee_name, email=payload.employee_email, department="Corporate User")
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+
+        issue_text = payload.issue or "Employee requested direct human IT technician dispatch."
+        cat = payload.category or "general"
+        ticket = Ticket(
+            employee_id=employee.id,
+            issue=issue_text,
+            category=cat,
+            priority="high",
+            status="INVESTIGATING"
+        )
+        db.add(ticket)
+        db.commit()
+        db.refresh(ticket)
+
+    return assign_ticket_to_human(ticket.id, payload, db)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+

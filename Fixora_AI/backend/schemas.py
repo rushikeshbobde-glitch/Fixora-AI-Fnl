@@ -19,6 +19,7 @@ class TicketResponse(BaseModel):
     resolution: str | None
     escalation_reason: str | None
     confidence: float | None
+    assigned_technician: str | None = None
     evidence: list[dict[str, Any]]
     workflow: list[dict[str, Any]]
     created_at: datetime | None = None
@@ -36,6 +37,7 @@ class TicketListItem(BaseModel):
     category: str | None
     priority: str | None
     confidence: float | None = None
+    assigned_technician: str | None = None
     created_at: datetime | None = None
 
 
@@ -88,6 +90,31 @@ class SupportResponse(BaseModel):
     status: str
     category: str | None = None
     priority: str | None = None
+    reply: str
+    events: list[SupportEvent] = []
+    assigned_technician: str | None = None
+    created_at: datetime | None = None
+
+
+class HumanAssignmentRequest(BaseModel):
+    ticket_id: int | None = None
+    ticket_number: str | None = None
+    issue: str | None = None
+    category: str | None = None
+    reason: str = "Employee requested direct human technician handover"
+    employee_name: str = "Sarah Connor"
+    employee_email: str = "sarah.connor@fixora.local"
+
+
+class HumanAssignmentResponse(BaseModel):
+    ticket_id: int
+    ticket_number: str
+    status: str
+    assigned_technician: str
+    technician_tier: str
+    technician_department: str
+    direct_channel: str
+    eta_minutes: int
     reply: str
     events: list[SupportEvent] = []
     created_at: datetime | None = None

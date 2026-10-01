@@ -95,6 +95,48 @@ export async function sendSupportRequest(message, source = "text", employeeName 
   return response.json();
 }
 
+export async function assignTicketToHuman(ticketId, reason = "Employee requested direct human handover", employeeName = "Sarah Connor", employeeEmail = "sarah.connor@fixora.local") {
+  const response = await fetch(`${API}/tickets/${ticketId}/assign-human`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      ticket_id: ticketId,
+      reason,
+      employee_name: employeeName,
+      employee_email: employeeEmail
+    })
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Human assignment request failed");
+  }
+
+  return response.json();
+}
+
+export async function escalateToHumanSupport(ticketNumber = null, issue = "", category = "general", reason = "Employee requested direct live technician", employeeName = "Sarah Connor", employeeEmail = "sarah.connor@fixora.local") {
+  const response = await fetch(`${API}/support/escalate`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      ticket_number: ticketNumber,
+      issue,
+      category,
+      reason,
+      employee_name: employeeName,
+      employee_email: employeeEmail
+    })
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Human escalation failed");
+  }
+
+  return response.json();
+}
+
 
 
 
