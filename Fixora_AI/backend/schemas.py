@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Any
+from datetime import datetime
 
 
 class TicketCreate(BaseModel):
@@ -10,6 +11,7 @@ class TicketCreate(BaseModel):
 
 class TicketResponse(BaseModel):
     ticket_id: int
+    issue: str | None = None
     status: str
     category: str | None
     priority: str | None
@@ -19,6 +21,7 @@ class TicketResponse(BaseModel):
     confidence: float | None
     evidence: list[dict[str, Any]]
     workflow: list[dict[str, Any]]
+    created_at: datetime | None = None
 
 
 class TicketListItem(BaseModel):
@@ -27,3 +30,20 @@ class TicketListItem(BaseModel):
     status: str
     category: str | None
     priority: str | None
+    confidence: float | None = None
+    created_at: datetime | None = None
+
+
+class OperatorActionPayload(BaseModel):
+    action: str
+    note: str | None = None
+
+
+class KnowledgeArticleSchema(BaseModel):
+    code: str
+    title: str
+    category: str
+    content: str
+    steps: list[str] = []
+    tools: list[str] = []
+

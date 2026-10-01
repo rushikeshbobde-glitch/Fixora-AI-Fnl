@@ -10,7 +10,7 @@ def run(issue: str):
         category = "network"
     elif re.search(r"(password|login|account|locked|authentication)", text):
         category = "authentication"
-    elif re.search(r"(laptop|computer|pc|device|keyboard|mouse)", text):
+    elif re.search(r"(laptop|computer|pc|device|keyboard|mouse|printer|print|spooler)", text):
         category = "device"
 
     priority = "medium"

@@ -3,41 +3,64 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from backend.config import settings
-from backend.db.database import Base, engine, get_db
-from backend.db.models import Employee, Ticket
+from backend.db.database import Base, engine, get_db, SessionLocal
+from backend.db.models import Employee, Ticket, KnowledgeArticle, AgentRun
 from backend.db.seed import seed_database
-from backend.schemas import TicketCreate, TicketListItem, TicketResponse
+from backend.schemas import (
+    TicketCreate,
+    TicketListItem,
+    TicketResponse,
+    OperatorActionPayload,
+    KnowledgeArticleSchema
+)
 from backend.agents.orchestrator import run_workflow
+
+from contextlib import asynccontextmanager
+
+def init_db():
+    try:
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            seed_database(db)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"Database initialization notice: {e}")
+
+# Ensure DB is initialized
+init_db()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 app = FastAPI(
     title="Fixora AI",
     description="Autonomous IT Service Desk & Resolution Agent",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 origins = [x.strip() for x in settings.cors_origins.split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"] if "*" in origins or not origins else origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-    db = next(get_db())
-    try:
-        seed_database(db)
-    finally:
-        db.close()
-
-
 @app.get("/api/health")
 def health():
     return {"ok": True, "service": "Fixora AI", "database": "PostgreSQL"}
+
+
+@app.get("/api/kb", response_model=list[KnowledgeArticleSchema])
+def list_knowledge_articles(db: Session = Depends(get_db)):
+    return db.query(KnowledgeArticle).order_by(KnowledgeArticle.id.asc()).all()
 
 
 @app.post("/api/tickets", response_model=TicketResponse)
@@ -81,6 +104,7 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
 
     return {
         "ticket_id": ticket.id,
+        "issue": ticket.issue,
         "status": ticket.status,
         "category": ticket.category,
         "priority": ticket.priority,
@@ -88,6 +112,7 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
         "resolution": ticket.resolution,
         "escalation_reason": ticket.escalation_reason,
         "confidence": ticket.confidence,
+        "created_at": ticket.created_at,
         "evidence": [
             {"code": e.source_code, "title": e.title, "reason": e.reason}
             for e in ticket.evidence
@@ -97,6 +122,41 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
             for r in ticket.runs
         ]
     }
+
+
+@app.post("/api/tickets/{ticket_id}/action", response_model=TicketResponse)
+def perform_operator_action(ticket_id: int, payload: OperatorActionPayload, db: Session = Depends(get_db)):
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if payload.action == "DISPATCH_TIER2":
+        ticket.status = "DISPATCHED_TO_TIER2"
+        ticket.escalation_reason = payload.note or "Dispatched to Senior IT Support Queue with full agent telemetry."
+    elif payload.action == "RESOLVE_MANUAL":
+        ticket.status = "RESOLVED_BY_HUMAN"
+        ticket.resolution = payload.note or "Resolved manually by IT Desk Operator."
+    elif payload.action == "APPROVE_AUTO_FIX":
+        ticket.status = "RESOLUTION_READY"
+        ticket.resolution = "Operator approved autonomous resolution execution."
+        ticket.escalation_reason = "Human supervisor override granted."
+        ticket.confidence = 0.99
+
+    db.add(AgentRun(
+        ticket_id=ticket.id,
+        agent_name="Human Operator Supervision",
+        status="COMPLETED",
+        output={
+            "action_taken": payload.action,
+            "operator_note": payload.note or "Action executed via Fixora Control Desk",
+            "new_status": ticket.status
+        }
+    ))
+    db.commit()
+    db.refresh(ticket)
+
+    return get_ticket(ticket_id, db)
+
 
 
 if __name__ == "__main__":

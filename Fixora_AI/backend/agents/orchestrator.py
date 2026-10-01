@@ -18,7 +18,7 @@ def run_workflow(db, ticket):
     ticket.priority = triage["priority"]
     workflow.append(("Ticket Triage Agent", triage))
 
-    knowledge = knowledge_agent.run(db, triage["category"])
+    knowledge = knowledge_agent.run(db, triage["category"], issue_text=ticket.issue)
     workflow.append(("Knowledge / RAG Agent", {"matches": knowledge}))
 
     for item in knowledge:
@@ -26,7 +26,7 @@ def run_workflow(db, ticket):
             ticket_id=ticket.id,
             source_code=item["code"],
             title=item["title"],
-            reason=f"Matched category: {triage['category']}"
+            reason=f"Matched: '{item['title']}' (Score: {item.get('relevance_score', 10)})"
         ))
 
     diagnosis = diagnosis_agent.run(triage["category"], knowledge)
