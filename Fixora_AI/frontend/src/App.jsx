@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { getTickets, getKnowledgeBase, getSystemStatus, sendSupportRequest } from "./api";
+import { getTickets, getKnowledgeBase, getSystemStatus, sendSupportRequest, assignTicketToHuman, escalateToHumanSupport } from "./api";
 
 const QUICK_CATEGORIES = [
   {
@@ -139,6 +139,7 @@ export default function App() {
   const [systemStatus, setSystemStatus] = useState("All Systems Operational");
   const [statusOnline, setStatusOnline] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [assigningHumanId, setAssigningHumanId] = useState(null);
 
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -187,6 +188,57 @@ export default function App() {
     }
   }
 
+  // Handle Direct Human Technician Handover
+  async function handleAssignToHuman(messageId, ticketId, ticketNumber, category = "general") {
+    if (assigningHumanId) return;
+    setAssigningHumanId(messageId || "active");
+    setErrorMsg("");
+
+    try {
+      let result;
+      if (ticketId) {
+        result = await assignTicketToHuman(ticketId, "Employee requested direct human technician handover");
+      } else {
+        result = await escalateToHumanSupport(ticketNumber, "Direct escalation requested by employee", category);
+      }
+
+      // Add Human Handover confirmation message to chat
+      const handoverMessage = {
+        id: `handover-${Date.now()}`,
+        sender: "ai",
+        text: result.reply,
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        ticketId: result.ticket_id,
+        ticketNumber: result.ticket_number,
+        status: "escalated",
+        assignedTechnician: result.assigned_technician,
+        events: result.events || [],
+        isHandover: true
+      };
+
+      setMessages((prev) => [
+        ...prev.map((m) => m.id === messageId ? { ...m, assignedTechnician: result.assigned_technician } : m),
+        handoverMessage
+      ]);
+
+      // Refresh tickets list
+      const updatedTickets = await getTickets().catch(() => []);
+      if (updatedTickets.length > 0) {
+        setTickets(updatedTickets);
+      }
+    } catch (err) {
+      setErrorMsg(err.message || "Could not assign human technician");
+    } finally {
+      setAssigningHumanId(null);
+    }
+  }
+
+  // Direct escalation from global shortcut
+  async function handleDirectHumanRequest() {
+    const customPrompt = input.trim() || "Immediate human IT assistance requested by employee.";
+    handleSubmit(customPrompt, "text");
+  }
+
   // Handle Support Submission (Text or Voice)
   async function handleSubmit(customMsg, source = "text") {
     const textToSend = (customMsg || input).trim();
@@ -218,10 +270,12 @@ export default function App() {
         sender: "ai",
         text: response.reply || "I have investigated your technical issue.",
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        ticketId: response.ticket_id,
         ticketNumber: response.ticket_number,
         status: response.status,
         category: response.category,
         priority: response.priority,
+        assignedTechnician: response.assigned_technician,
         events: response.events || [],
         source
       };
@@ -512,6 +566,53 @@ export default function App() {
                           </div>
                         </div>
                       )}
+
+                      {/* Direct Human Technician Handover Action Banner */}
+                      {m.ticketNumber && !m.isHandover && (
+                        <div className="handover-action-banner">
+                          {m.assignedTechnician ? (
+                            <div className="handover-assigned-badge">
+                              <span className="badge-icon">👨‍💻</span>
+                              <div className="badge-text-block">
+                                <span className="badge-main-text">
+                                  Directly Assigned to <strong>{m.assignedTechnician}</strong>
+                                </span>
+                                <span className="badge-sub-text">Tier-2 On-Call Specialist reviewing telemetry</span>
+                              </div>
+                              <span className="badge-pulse-indicator">
+                                <span className="pulse-dot"></span> Active
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="handover-prompt-box">
+                              <div className="handover-prompt-info">
+                                <span className="handover-prompt-title">Solution didn't work or need urgent help?</span>
+                                <span className="handover-prompt-desc">
+                                  Bypass AI troubleshooting and dispatch this ticket immediately to an on-call technician.
+                                </span>
+                              </div>
+                              <button
+                                className="btn-escalate-human"
+                                onClick={() => handleAssignToHuman(m.id, m.ticketId, m.ticketNumber, m.category)}
+                                disabled={assigningHumanId === m.id}
+                                title="Bypass AI responses and assign directly to on-call IT engineer"
+                              >
+                                {assigningHumanId === m.id ? (
+                                  <>
+                                    <span className="spinner-mini"></span>
+                                    <span>Paging On-Call Technician...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="btn-icon">👨‍💻</span>
+                                    <span>Assign to Human IT Specialist</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="message-timestamp">{m.time}</div>
@@ -586,8 +687,18 @@ export default function App() {
               </button>
             </div>
 
-            <div className="composer-helper-caption">
-              You can type your issue, use the microphone to speak, or attach a screenshot.
+            <div className="composer-bottom-bar">
+              <span className="composer-helper-caption">
+                Type your issue, use voice, or dispatch to a live technician.
+              </span>
+              <button
+                className="btn-quick-human-dispatch"
+                onClick={handleDirectHumanRequest}
+                title="Immediately talk with a live Tier-2 technician"
+                type="button"
+              >
+                👨‍💻 Request Live Human Agent
+              </button>
             </div>
           </div>
         </main>
