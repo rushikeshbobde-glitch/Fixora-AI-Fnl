@@ -7,6 +7,8 @@ This document contains the complete commit log and copy-pasteable commands to sy
 ## 📜 Pushed Commits on `feature/fixora-ai-it-service-desk`
 
 ```text
+ce3e381 fix(triage): decouple hardware boot failure from printer category and add cold reset runbook
+5d11b68 docs: add contributor commit list and 1-click sync scripts for multi-device setup
 0a546b7 feat(solutions): generate humanized specialist solutions with actionable step-by-step instructions
 711439c feat(ui): implement official Fixora AI light-mode mockup interface with /api/support endpoint
 1c40ec3 feat(voice-desk): add real-time AI audio calls, conversational chat hub, and voice-to-speech recovery pipeline
