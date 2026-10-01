@@ -11,9 +11,13 @@ from backend.schemas import (
     TicketListItem,
     TicketResponse,
     OperatorActionPayload,
-    KnowledgeArticleSchema
+    KnowledgeArticleSchema,
+    VoiceChatRequest,
+    VoiceChatResponse
 )
+from backend.services.ai_service import synthesize_voice_response
 from backend.agents.orchestrator import run_workflow
+
 
 from contextlib import asynccontextmanager
 
@@ -91,9 +95,102 @@ def create_and_investigate(payload: TicketCreate, db: Session = Depends(get_db))
     return run_workflow(db, ticket)
 
 
+@app.post("/api/chat", response_model=VoiceChatResponse)
+def handle_voice_chat(payload: VoiceChatRequest, db: Session = Depends(get_db)):
+    msg = payload.message.strip()
+    msg_lower = msg.lower()
+
+    # Determine if this message is a technical issue to triage & solve
+    greetings = {"hi", "hello", "hey", "good morning", "good afternoon", "who are you", "what can you do", "help me", "start"}
+    is_greeting = any(msg_lower.startswith(g) or msg_lower == g for g in greetings) and not any(k in msg_lower for k in ["vpn", "wifi", "password", "lock", "printer", "down", "error", "server", "outage"])
+
+    tech_keywords = [
+        "vpn", "wifi", "wi-fi", "network", "internet", "connect", "disconnect",
+        "password", "lock", "account", "login", "auth", "sso", "directory",
+        "printer", "print", "spooler", "paper", "jam", "offline",
+        "server", "down", "outage", "database", "error", "failing", "broken", "stuck",
+        "slow", "laptop", "device", "ip", "dhcp", "dns", "fix", "troubleshoot", "jamming"
+    ]
+
+    is_tech_issue = not is_greeting and (any(k in msg_lower for k in tech_keywords) or len(msg.split()) >= 4)
+
+
+    if is_tech_issue:
+        # Locate or create employee
+        employee = db.query(Employee).filter(Employee.email == payload.employee_email).first()
+        if not employee:
+            employee = Employee(
+                name=payload.employee_name,
+                email=payload.employee_email,
+                department="Corporate Staff"
+            )
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+
+        # Create ticket
+        ticket = Ticket(
+            employee_id=employee.id,
+            issue=msg,
+            status="INVESTIGATING"
+        )
+        db.add(ticket)
+        db.commit()
+        db.refresh(ticket)
+
+        ticket_res = run_workflow(db, ticket)
+
+        tools_executed = [dt.get("tool") for dt in ticket_res.get("dynamic_tools", []) if dt.get("decision") == "SELECTED"]
+        if not tools_executed:
+            tools_executed = ["diagnostic_inspection"]
+
+        spoken_text = synthesize_voice_response(
+            issue=ticket_res["issue"],
+            status=ticket_res["status"],
+            category=ticket_res.get("category") or "general",
+            diagnosis=ticket_res.get("diagnosis") or "",
+            resolution=ticket_res.get("resolution") or "",
+            tools_executed=tools_executed
+        )
+
+        return VoiceChatResponse(
+            reply=f"I've initiated an autonomous IT investigation for: **\"{msg}\"**.\n\n"
+                  f"• **Diagnosis**: {ticket_res.get('diagnosis')}\n"
+                  f"• **Actions Applied**: {ticket_res.get('resolution')}\n"
+                  f"• **Status**: {ticket_res.get('status').replace('_', ' ')}",
+            spoken_audio_text=spoken_text,
+            ticket=ticket_res,
+            action_type="AUTO_FIXED" if ticket_res["status"] == "RESOLUTION_READY" else "ESCALATED"
+        )
+    else:
+        spoken = "Hello! I am Fixora AI, your autonomous IT helpdesk agent. Tell me what tech trouble you are experiencing or speak with me on this audio call to resolve it!"
+        return VoiceChatResponse(
+            reply=spoken,
+            spoken_audio_text=spoken,
+            ticket=None,
+            action_type="CONVERSATIONAL"
+        )
+
+
+
 @app.get("/api/tickets", response_model=list[TicketListItem])
 def list_tickets(db: Session = Depends(get_db)):
     return db.query(Ticket).order_by(Ticket.id.desc()).limit(50).all()
+
+
+@app.get("/api/system-status")
+def get_system_status():
+    return {
+        "overall_status": "OPERATIONAL",
+        "last_probed": "Just now",
+        "services": [
+            {"name": "Corporate VPN Gateway (vpn.fixora.internal)", "status": "OPERATIONAL", "latency": "18ms", "load": "42%"},
+            {"name": "Azure AD / Directory Federation", "status": "OPERATIONAL", "latency": "35ms", "load": "18%"},
+            {"name": "Office Network DHCP & DNS (1.1.1.1)", "status": "OPERATIONAL", "latency": "4ms", "load": "29%"},
+            {"name": "Windows Print Spooler Hub", "status": "DEGRADED", "latency": "120ms", "load": "74%", "note": "Queue stall auto-remediated"},
+            {"name": "PostgreSQL Telemetry Audit Store", "status": "OPERATIONAL", "latency": "2ms", "load": "11%"}
+        ]
+    }
 
 
 @app.get("/api/tickets/{ticket_id}", response_model=TicketResponse)
@@ -101,6 +198,23 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+
+    workflow = [
+        {"agent": r.agent_name, "output": r.output}
+        for r in ticket.runs
+    ]
+
+    # Extract rich telemetry if stored in runs
+    previous_tickets = []
+    system_status = {}
+    dynamic_tools = []
+    for r in ticket.runs:
+        if r.agent_name == "Knowledge / RAG Agent" and isinstance(r.output, dict):
+            previous_tickets = r.output.get("previous_tickets_investigated", [])
+        elif r.agent_name == "System Diagnosis Agent" and isinstance(r.output, dict):
+            system_status = r.output.get("system_status", {})
+        elif r.agent_name == "Troubleshooting Agent" and isinstance(r.output, dict):
+            dynamic_tools = r.output.get("evaluated_tools", [])
 
     return {
         "ticket_id": ticket.id,
@@ -113,15 +227,16 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
         "escalation_reason": ticket.escalation_reason,
         "confidence": ticket.confidence,
         "created_at": ticket.created_at,
+        "previous_tickets": previous_tickets,
+        "system_status": system_status,
+        "dynamic_tools": dynamic_tools,
         "evidence": [
             {"code": e.source_code, "title": e.title, "reason": e.reason}
             for e in ticket.evidence
         ],
-        "workflow": [
-            {"agent": r.agent_name, "output": r.output}
-            for r in ticket.runs
-        ]
+        "workflow": workflow
     }
+
 
 
 @app.post("/api/tickets/{ticket_id}/action", response_model=TicketResponse)

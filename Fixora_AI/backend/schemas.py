@@ -22,6 +22,10 @@ class TicketResponse(BaseModel):
     evidence: list[dict[str, Any]]
     workflow: list[dict[str, Any]]
     created_at: datetime | None = None
+    previous_tickets: list[dict[str, Any]] = []
+    system_status: dict[str, Any] = {}
+    dynamic_tools: list[dict[str, Any]] = []
+
 
 
 class TicketListItem(BaseModel):
@@ -46,4 +50,20 @@ class KnowledgeArticleSchema(BaseModel):
     content: str
     steps: list[str] = []
     tools: list[str] = []
+
+
+class VoiceChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    ticket_id: int | None = None
+    employee_name: str = "Jane Doe"
+    employee_email: str = "jane.doe@fixora.local"
+    is_voice_call: bool = False
+
+
+class VoiceChatResponse(BaseModel):
+    reply: str
+    spoken_audio_text: str
+    ticket: TicketResponse | None = None
+    action_type: str = "CONVERSATIONAL" # 'INVESTIGATED' | 'CONVERSATIONAL' | 'AUTO_FIXED' | 'ESCALATED'
+
 
