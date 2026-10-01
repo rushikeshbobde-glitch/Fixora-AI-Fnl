@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+node_modules/
+npm-debug.log
+yarn-error.log
+.DS_Store
+Thumbs.db
+Fixora_AI/frontend/node_modules/
+Fixora_AI/frontend/.vite/
