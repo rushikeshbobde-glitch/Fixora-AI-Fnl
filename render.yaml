@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: fixora-ai-service-desk
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /api/system/status
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: DATABASE_URL
+        generateValue: false
+        sync: false
