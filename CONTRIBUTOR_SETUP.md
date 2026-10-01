@@ -7,9 +7,9 @@ This document contains the complete commit log and copy-pasteable commands to sy
 ## 📜 Pushed Commits on `feature/fixora-ai-it-service-desk`
 
 ```text
-ce3e381 fix(triage): decouple hardware boot failure from printer category and add cold reset runbook
-5d11b68 docs: add contributor commit list and 1-click sync scripts for multi-device setup
-0a546b7 feat(solutions): generate humanized specialist solutions with actionable step-by-step instructions
+97360cc feat(human-handover): add 1-click direct assignment to on-call human technician with zero AI delay
+3e1e9d7 fix(ui): eliminate double bullet rendering, add circular step badges, and style inline markdown
+b04194d docs: update contributor commit list with latest triage fix
 711439c feat(ui): implement official Fixora AI light-mode mockup interface with /api/support endpoint
 1c40ec3 feat(voice-desk): add real-time AI audio calls, conversational chat hub, and voice-to-speech recovery pipeline
 3b5e2e6 feat(frontdesk): transform UI into enterprise employee service portal with dynamic tool matrix and past ticket correlation
