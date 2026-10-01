@@ -54,6 +54,36 @@ def restart_print_spooler():
     }
 
 
+def hardware_power_diagnostic():
+    return {
+        "tool": "hardware_power_diagnostic",
+        "status": "success",
+        "action": "diagnosed",
+        "message": "Power rails checked. Hardware cold reset instructions dispatched to user.",
+        "power_state": "STANDBY_POWER_OK"
+    }
+
+
+def clean_temp_cache():
+    return {
+        "tool": "clean_temp_cache",
+        "status": "success",
+        "action": "remediated",
+        "message": "Orphaned processes terminated and temporary OS caches cleared (2.4 GB reclaimed).",
+        "memory_freed_mb": 2400
+    }
+
+
+def verify_software_license():
+    return {
+        "tool": "verify_software_license",
+        "status": "success",
+        "action": "remediated",
+        "message": "Software package entitlement confirmed in Microsoft Intune / Jamf.",
+        "package": "Corporate Suite"
+    }
+
+
 def execute_tool(name):
     tools = {
         "check_network": check_network,
@@ -64,7 +94,11 @@ def execute_tool(name):
         "unlock_user_account": unlock_user_account,
         "renew_dhcp_lease": renew_dhcp_lease,
         "restart_print_spooler": restart_print_spooler,
+        "hardware_power_diagnostic": hardware_power_diagnostic,
+        "clean_temp_cache": clean_temp_cache,
+        "verify_software_license": verify_software_license,
     }
     fn = tools.get(name)
     return fn() if fn else {"tool": name, "status": "unsupported", "message": f"Tool '{name}' not found in registry"}
+
 
