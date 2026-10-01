@@ -2,7 +2,7 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-console.log("==> Vercel Universal Build Hook Started");
+console.log("==> Vercel Universal Build Hook Started (Fixora_AI/backend)");
 console.log("==> __dirname:", __dirname);
 console.log("==> process.cwd():", process.cwd());
 
@@ -12,6 +12,7 @@ function findFrontendDir(startDir) {
     const candidates = [
       path.join(curr, "Fixora_AI", "frontend"),
       path.join(curr, "frontend"),
+      path.join(curr, "..", "frontend"),
       path.join(curr, "Fixora_AI_Problem12_PostgreSQL_Complete", "Fixora_AI", "frontend"),
       curr
     ];
